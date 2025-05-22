@@ -107,7 +107,6 @@ pub struct IndexerApi<R> {
     state: Arc<dyn StateRead>,
     read_api: R,
     transaction_kv_store: Arc<TransactionKeyValueStore>,
-    iota_names_config: IotaNamesConfig,
     pub metrics: Arc<JsonRpcMetrics>,
     subscription_semaphore: Arc<Semaphore>,
 }
@@ -118,7 +117,6 @@ impl<R: ReadApiServer> IndexerApi<R> {
         read_api: R,
         transaction_kv_store: Arc<TransactionKeyValueStore>,
         metrics: Arc<JsonRpcMetrics>,
-        iota_names_config: IotaNamesConfig,
         max_subscriptions: Option<usize>,
     ) -> Self {
         let max_subscriptions = max_subscriptions.unwrap_or(DEFAULT_MAX_SUBSCRIPTIONS);
@@ -127,7 +125,6 @@ impl<R: ReadApiServer> IndexerApi<R> {
             transaction_kv_store,
             read_api,
             metrics,
-            iota_names_config,
             subscription_semaphore: Arc::new(Semaphore::new(max_subscriptions)),
         }
     }
@@ -191,6 +188,15 @@ impl<R: ReadApiServer> IndexerApi<R> {
             .get_verified_checkpoint_by_sequence_number(latest_checkpoint)?;
 
         Ok(checkpoint.timestamp_ms)
+    }
+
+    fn get_iota_names_config(&self) -> IotaNamesConfig {
+        if let Ok(config) = IotaNamesConfig::from_env() {
+            config
+        } else {
+            // TODO: Replace with `IotaNamesConfig::from_chain` once fully implemented
+            IotaNamesConfig::default()
+        }
     }
 }
 
@@ -461,12 +467,14 @@ impl<R: ReadApiServer> IndexerApiServer for IndexerApi<R> {
     async fn iota_names_lookup(&self, name: &str) -> RpcResult<Option<IotaNameRecord>> {
         let domain = name.parse::<Domain>().map_err(Error::from)?;
 
+        let iota_names_config = self.get_iota_names_config();
+
         // Construct the record id to lookup.
-        let record_id = self.iota_names_config.record_field_id(&domain);
+        let record_id = iota_names_config.record_field_id(&domain);
 
         let parent_record_id = domain
             .parent()
-            .map(|parent_domain| self.iota_names_config.record_field_id(&parent_domain));
+            .map(|parent_domain| iota_names_config.record_field_id(&parent_domain));
 
         // Keep record IDs alive by declaring both before creating futures
         let mut requests = vec![self.state.get_object(&record_id)];
@@ -533,7 +541,9 @@ impl<R: ReadApiServer> IndexerApiServer for IndexerApi<R> {
 
     #[instrument(skip(self))]
     async fn iota_names_reverse_lookup(&self, address: IotaAddress) -> RpcResult<Option<String>> {
-        let reverse_record_id = self.iota_names_config.reverse_record_field_id(&address);
+        let iota_names_config = self.get_iota_names_config();
+
+        let reverse_record_id = iota_names_config.reverse_record_field_id(&address);
 
         let Some(field_reverse_record_object) = self
             .state
@@ -569,9 +579,11 @@ impl<R: ReadApiServer> IndexerApiServer for IndexerApi<R> {
         limit: Option<usize>,
         options: Option<IotaObjectDataOptions>,
     ) -> RpcResult<ObjectsPage> {
+        let iota_names_config = self.get_iota_names_config();
+
         let query = IotaObjectResponseQuery {
             filter: Some(IotaObjectDataFilter::StructType(
-                IotaNamesRegistration::type_(self.iota_names_config.package_address.into()),
+                IotaNamesRegistration::type_(iota_names_config.package_address.into()),
             )),
             options,
         };
