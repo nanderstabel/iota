@@ -2,10 +2,17 @@
 // Modifications Copyright (c) 2024 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeMap, ffi::OsString, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap, ffi::OsString, fs, num::NonZeroUsize, path::PathBuf, sync::Arc,
+    time::Duration,
+};
 
 use backoff::backoff::Backoff;
 use futures::StreamExt;
+use iota_config::{
+    node::ArchiveReaderConfig,
+    object_storage_config::{ObjectStoreConfig, ObjectStoreType},
+};
 use iota_metrics::spawn_monitored_task;
 use iota_rest_api::Client;
 use iota_storage::blob::Blob;
@@ -27,7 +34,15 @@ use tracing::{debug, error, info};
 use crate::{
     IngestionError, IngestionResult, create_remote_store_client,
     executor::MAX_CHECKPOINTS_IN_PROGRESS,
+    history::{
+        manifest::{Manifest, read_manifest_from_bytes},
+        reader::HistoricalReader,
+    },
 };
+
+const CHECKPOINT_FILE_SUFFIX: &str = "chk";
+const LIVE_DIR_NAME: &str = "live";
+const INGESTION_DIR_NAME: &str = "ingestion";
 
 type CheckpointResult = IngestionResult<(Arc<CheckpointData>, usize)>;
 
@@ -35,17 +50,31 @@ type CheckpointResult = IngestionResult<(Arc<CheckpointData>, usize)>;
 /// Designed for setups where the indexer daemon is colocated with FN.
 /// This implementation is push-based and utilizes the inotify API.
 pub struct CheckpointReader {
+    /// Filesystem path to the local checkpoint directory.
     path: PathBuf,
+    /// URL for the remote checkpoint store.
     remote_store_url: Option<String>,
+    /// Additional options for configuring the remote store.
     remote_store_options: Vec<(String, String)>,
+    /// Start fetch from the current checkpoint sequence.
     current_checkpoint_number: CheckpointSequenceNumber,
     last_pruned_watermark: CheckpointSequenceNumber,
+    /// Channel for sending checkpoints to WorkerPools.
     checkpoint_sender: mpsc::Sender<Arc<CheckpointData>>,
+    /// Channel receiver for receiving notifications of processed checkpoints
+    /// from [`WorkerPools`](crate::WorkerPool).
     processed_receiver: mpsc::Receiver<CheckpointSequenceNumber>,
+    /// Checkpoints fetched from the remote store.
     remote_fetcher_receiver: Option<mpsc::Receiver<CheckpointResult>>,
+    /// Signal when the reader should exit.
     exit_receiver: oneshot::Receiver<()>,
     options: ReaderOptions,
     data_limiter: DataLimiter,
+    /// Historical checkpoint reader for fetching checkpoints from genesis up to
+    /// tip of the network.
+    historical_reader: Option<Arc<HistoricalReader>>,
+    /// Remote checkpoint reader for fetching checkpoints from the network.
+    remote_store: Option<Arc<RemoteStore>>,
 }
 
 /// Options for configuring how the checkpoint reader fetches new checkpoints.
@@ -123,18 +152,108 @@ impl CheckpointReader {
             || self.data_limiter.exceeds()
     }
 
-    async fn fetch_from_object_store(
+    /// Constructs a file path for a checkpoint file based on the checkpoint
+    /// sequence number for Live object store.
+    fn live_object_store_file_path(chk_seq_num: CheckpointSequenceNumber) -> Path {
+        Path::from(INGESTION_DIR_NAME)
+            .child(LIVE_DIR_NAME)
+            .child(format!("{chk_seq_num}.{CHECKPOINT_FILE_SUFFIX}"))
+    }
+
+    /// Constructs a file path for a checkpoint file based on the checkpoint
+    /// sequence number for a generic object store.
+    fn object_store_file_path(chk_seq_num: CheckpointSequenceNumber) -> Path {
+        Path::from(format!("{chk_seq_num}.{CHECKPOINT_FILE_SUFFIX}"))
+    }
+
+    /// Helper function to fetch and deserialize a single checkpoint from an
+    /// object store.
+    async fn fetch_from_object_store_internal(
         store: &dyn ObjectStore,
-        checkpoint_number: CheckpointSequenceNumber,
-    ) -> IngestionResult<(Arc<CheckpointData>, usize)> {
-        let path = Path::from(format!("{}.chk", checkpoint_number));
-        let response = store.get(&path).await?;
+        path: &Path,
+    ) -> CheckpointResult {
+        let response = store.get(path).await?;
         let bytes = response.bytes().await?;
         Ok((
             Blob::from_bytes::<Arc<CheckpointData>>(&bytes)
                 .map_err(|err| IngestionError::DeserializeCheckpoint(err.to_string()))?,
             bytes.len(),
         ))
+    }
+
+    /// Fetches a checkpoint from the given object store, optionally using a
+    /// historical reader.
+    async fn fetch_from_object_store(
+        store: &dyn ObjectStore,
+        historical_reader: Option<&HistoricalReader>,
+        checkpoint_number: CheckpointSequenceNumber,
+    ) -> IngestionResult<(Arc<CheckpointData>, usize)> {
+        if let Some(historical_reader) = historical_reader {
+            return Self::fetch_from_hybrid_object_store(
+                historical_reader,
+                store,
+                checkpoint_number,
+            )
+            .await;
+        }
+
+        Self::fetch_from_object_store_internal(
+            store,
+            &Self::object_store_file_path(checkpoint_number),
+        )
+        .await
+    }
+
+    /// Attempts to fetch a checkpoint from the historical object store first,
+    /// falling back to the live object store if not found.
+    async fn fetch_from_hybrid_object_store(
+        historical_reader: &HistoricalReader,
+        live: &dyn ObjectStore,
+        checkpoint_number: CheckpointSequenceNumber,
+    ) -> IngestionResult<(Arc<CheckpointData>, usize)> {
+        if let Some((checkpoint, size)) =
+            Self::fetch_from_historical_object_store(historical_reader, checkpoint_number).await?
+        {
+            debug!(
+                "checkpoint fetched from historical object store: {}",
+                checkpoint.checkpoint_summary.sequence_number
+            );
+            return Ok((checkpoint, size));
+        };
+
+        Self::fetch_from_live_object_store(live, checkpoint_number).await
+    }
+
+    async fn fetch_from_live_object_store(
+        store: &dyn ObjectStore,
+        checkpoint_number: CheckpointSequenceNumber,
+    ) -> IngestionResult<(Arc<CheckpointData>, usize)> {
+        Self::fetch_from_object_store_internal(
+            store,
+            &Self::live_object_store_file_path(checkpoint_number),
+        )
+        .await
+    }
+
+    async fn fetch_from_historical_object_store(
+        historical_reader: &HistoricalReader,
+        checkpoint_number: CheckpointSequenceNumber,
+    ) -> IngestionResult<Option<(Arc<CheckpointData>, usize)>> {
+        historical_reader.sync_manifest_once().await?;
+        let latest_available_checkpoint = historical_reader.latest_available_checkpoint().await?;
+        debug!("historical latest_available_checkpoint: {latest_available_checkpoint}");
+        if checkpoint_number > latest_available_checkpoint {
+            return Ok(None);
+        }
+        let checkpoint = historical_reader
+            .iter_for_range(checkpoint_number..checkpoint_number + 1)
+            .await?
+            .next();
+
+        checkpoint
+            .map(|chk| bcs::serialized_size(&chk).map(|size| (Arc::new(chk), size)))
+            .transpose()
+            .map_err(Into::into)
     }
 
     async fn fetch_from_full_node(
@@ -148,11 +267,12 @@ impl CheckpointReader {
 
     async fn remote_fetch_checkpoint_internal(
         store: &RemoteStore,
+        historical_reader: Option<&HistoricalReader>,
         checkpoint_number: CheckpointSequenceNumber,
     ) -> IngestionResult<(Arc<CheckpointData>, usize)> {
         match store {
             RemoteStore::ObjectStore(store) => {
-                Self::fetch_from_object_store(store, checkpoint_number).await
+                Self::fetch_from_object_store(store, historical_reader, checkpoint_number).await
             }
             RemoteStore::Rest(client) => {
                 Self::fetch_from_full_node(client, checkpoint_number).await
@@ -160,7 +280,10 @@ impl CheckpointReader {
             RemoteStore::Hybrid(store, client) => {
                 match Self::fetch_from_full_node(client, checkpoint_number).await {
                     Ok(result) => Ok(result),
-                    Err(_) => Self::fetch_from_object_store(store, checkpoint_number).await,
+                    Err(_) => {
+                        Self::fetch_from_object_store(store, historical_reader, checkpoint_number)
+                            .await
+                    }
                 }
             }
         }
@@ -168,6 +291,7 @@ impl CheckpointReader {
 
     async fn remote_fetch_checkpoint(
         store: &RemoteStore,
+        historical_reader: Option<&HistoricalReader>,
         checkpoint_number: CheckpointSequenceNumber,
     ) -> IngestionResult<(Arc<CheckpointData>, usize)> {
         let mut backoff = backoff::ExponentialBackoff::default();
@@ -176,7 +300,13 @@ impl CheckpointReader {
         backoff.current_interval = backoff.initial_interval;
         backoff.multiplier = 1.0;
         loop {
-            match Self::remote_fetch_checkpoint_internal(store, checkpoint_number).await {
+            match Self::remote_fetch_checkpoint_internal(
+                store,
+                historical_reader,
+                checkpoint_number,
+            )
+            .await
+            {
                 Ok(data) => return Ok(data),
                 Err(err) => match backoff.next_backoff() {
                     Some(duration) => {
@@ -195,39 +325,73 @@ impl CheckpointReader {
         }
     }
 
-    fn start_remote_fetcher(
-        &mut self,
-    ) -> mpsc::Receiver<IngestionResult<(Arc<CheckpointData>, usize)>> {
-        let batch_size = self.options.batch_size;
-        let start_checkpoint = self.current_checkpoint_number;
-        let (sender, receiver) = mpsc::channel(batch_size);
-        let url = self
-            .remote_store_url
-            .clone()
-            .expect("remote store url must be set");
-        let store = if let Some((fn_url, remote_url)) = url.split_once('|') {
+    async fn create_remote_store(&self) -> (Option<RemoteStore>, Option<HistoricalReader>) {
+        let Some(url) = self.remote_store_url.as_ref() else {
+            return (None, None);
+        };
+
+        if let Some((fn_url, remote_url)) = url.split_once('|') {
             let object_store = create_remote_store_client(
                 remote_url.to_string(),
                 self.remote_store_options.clone(),
                 self.options.timeout_secs,
             )
             .expect("failed to create remote store client");
-            RemoteStore::Hybrid(object_store, iota_rest_api::Client::new(fn_url))
-        } else if url.ends_with("/api/v1") {
-            RemoteStore::Rest(iota_rest_api::Client::new(url))
-        } else {
-            let object_store = create_remote_store_client(
-                url,
-                self.remote_store_options.clone(),
-                self.options.timeout_secs,
-            )
-            .expect("failed to create remote store client");
-            RemoteStore::ObjectStore(object_store)
+            let historical_reader =
+                Self::historical_reader(&object_store, url.clone(), self.options.batch_size).await;
+            return (
+                Some(RemoteStore::Hybrid(
+                    object_store,
+                    iota_rest_api::Client::new(fn_url),
+                )),
+                historical_reader,
+            );
+        }
+
+        if url.ends_with("/api/v1") {
+            return (
+                Some(RemoteStore::Rest(iota_rest_api::Client::new(url))),
+                None,
+            );
+        }
+
+        let object_store = create_remote_store_client(
+            url.clone(),
+            self.remote_store_options.clone(),
+            self.options.timeout_secs,
+        )
+        .expect("failed to create remote store client");
+
+        let historical_reader =
+            Self::historical_reader(&object_store, url.clone(), self.options.batch_size).await;
+
+        (
+            Some(RemoteStore::ObjectStore(object_store)),
+            historical_reader,
+        )
+    }
+
+    fn start_remote_fetcher(
+        &mut self,
+    ) -> mpsc::Receiver<IngestionResult<(Arc<CheckpointData>, usize)>> {
+        let batch_size = self.options.batch_size;
+        let start_checkpoint = self.current_checkpoint_number;
+        let (sender, receiver) = mpsc::channel(batch_size);
+
+        let Some(remote_store) = self.remote_store.as_ref().map(Arc::clone) else {
+            panic!("remote store not initialized")
         };
+        let historical_reader = self.historical_reader.as_ref().map(Arc::clone);
 
         spawn_monitored_task!(async move {
             let mut checkpoint_stream = (start_checkpoint..u64::MAX)
-                .map(|checkpoint_number| Self::remote_fetch_checkpoint(&store, checkpoint_number))
+                .map(|checkpoint_number| {
+                    Self::remote_fetch_checkpoint(
+                        &remote_store,
+                        historical_reader.as_deref(),
+                        checkpoint_number,
+                    )
+                })
                 .pipe(futures::stream::iter)
                 .buffered(batch_size);
 
@@ -239,6 +403,51 @@ impl CheckpointReader {
             }
         });
         receiver
+    }
+
+    /// Creates a new historical reader.
+    ///
+    /// It checks if the object store does contain a Manifest file and
+    /// validates it. If conditions are met a [`HsitoricalReader`] is
+    /// instantiated.
+    async fn historical_reader(
+        store: &dyn ObjectStore,
+        url: String,
+        batch_size: usize,
+    ) -> Option<HistoricalReader> {
+        if let Ok(manifest) = store.get(&Manifest::file_path()).await {
+            let is_manifest_valid = manifest
+                .bytes()
+                .await
+                .map_err(Into::into)
+                .and_then(|bytes| read_manifest_from_bytes(bytes.to_vec()))
+                .is_ok();
+
+            return is_manifest_valid
+                .then_some({
+                    let config = ArchiveReaderConfig {
+                        download_concurrency: NonZeroUsize::new(batch_size)
+                            .expect("batch size must be greater than zero"),
+                        remote_store_config: ObjectStoreConfig {
+                            object_store: Some(ObjectStoreType::S3),
+                            object_store_connection_limit: 20,
+                            aws_endpoint: Some(url),
+                            aws_virtual_hosted_style_request: true,
+                            aws_region: Some("weur".to_string()),
+                            no_sign_request: true,
+                            ..Default::default()
+                        },
+                        use_for_pruning_watermark: false,
+                    };
+                    HistoricalReader::new(config)
+                        .inspect_err(|e| {
+                            tracing::error!("unable to instantiate historical reader: {e}")
+                        })
+                        .ok()
+                })
+                .flatten();
+        }
+        None
     }
 
     fn remote_fetch(&mut self) -> Vec<Arc<CheckpointData>> {
@@ -279,7 +488,7 @@ impl CheckpointReader {
         .await?;
 
         let mut read_source: &str = "local";
-        if self.remote_store_url.is_some()
+        if self.remote_store.is_some()
             && (checkpoints.is_empty()
                 || checkpoints[0].checkpoint_summary.sequence_number
                     > self.current_checkpoint_number)
@@ -369,6 +578,8 @@ impl CheckpointReader {
             exit_receiver,
             data_limiter: DataLimiter::new(options.data_limit),
             options,
+            historical_reader: None,
+            remote_store: None,
         };
         (reader, checkpoint_recv, processed_sender, exit_sender)
     }
@@ -391,6 +602,11 @@ impl CheckpointReader {
             .expect("Inotify watcher failed");
         self.gc_processed_files(self.last_pruned_watermark)
             .expect("Failed to clean the directory");
+
+        let (remote_store, historical_reader) = self.create_remote_store().await;
+
+        self.remote_store = remote_store.map(Arc::new);
+        self.historical_reader = historical_reader.map(Arc::new);
 
         loop {
             tokio::select! {
