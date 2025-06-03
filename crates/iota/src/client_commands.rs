@@ -93,7 +93,7 @@ use tracing::debug;
 use crate::{
     PrintableResult,
     clever_error_rendering::render_clever_error_opt,
-    client_ptb::ptb::PTB,
+    client_ptb::ptb::{PTB, PTBCommandResult},
     displays::Pretty,
     key_identity::{KeyIdentity, get_identity_address},
     keytool::Key,
@@ -496,6 +496,10 @@ pub enum IotaClientCommands {
         #[arg(long, short)]
         profile_output: Option<PathBuf>,
     },
+    /// Remove an existing address by its alias or hexadecimal string.
+    /// Warning: removes the private key from the keystore with no way to
+    /// recover it if it was not backed up.
+    RemoveAddress { address: KeyIdentity },
     /// Replay a given transaction to view transaction effects. Set environment
     /// variable MOVE_VM_STEP=1 to debug.
     ReplayTransaction {
@@ -691,10 +695,10 @@ impl OptsWithGas {
             args.push("--dev-inspect".to_string());
         }
         if self.rest.serialize_signed_transaction {
-            args.push("--serialize_signed_transaction".to_string());
+            args.push("--serialize-signed-transaction".to_string());
         }
         if self.rest.serialize_unsigned_transaction {
-            args.push("--serialize_unsigned_transaction".to_string());
+            args.push("--serialize-unsigned-transaction".to_string());
         }
         args
     }
@@ -745,6 +749,25 @@ impl IotaClientCommands {
                         .await?;
                 // this will be displayed via trace info, so no output is needed here
                 IotaClientCommandResult::NoOutput
+            }
+            IotaClientCommands::RemoveAddress { address } => {
+                let address = get_identity_address(Some(address), context)?;
+
+                if context.config().keystore().get_key(&address).is_ok() {
+                    context.config_mut().keystore_mut().remove_key(&address)?;
+                    if context
+                        .config()
+                        .active_address()
+                        .is_some_and(|a| a == address)
+                    {
+                        context.config_mut().set_active_address(None);
+                        context.config().save()?;
+                    }
+                } else {
+                    bail!("Address \"{address}\" does not exist in keystore");
+                }
+
+                IotaClientCommandResult::RemoveAddress(address)
             }
             IotaClientCommands::ReplayTransaction {
                 tx_digest,
@@ -1706,10 +1729,16 @@ impl IotaClientCommands {
 
                 IotaClientCommandResult::VerifySource
             }
-            IotaClientCommands::PTB(ptb) => {
-                ptb.execute(context).await?;
-                IotaClientCommandResult::NoOutput
-            }
+            IotaClientCommands::PTB(ptb) => match ptb.execute(context).await? {
+                PTBCommandResult::CommandResult(iota_client_command_result) => {
+                    iota_client_command_result
+                }
+                res => {
+                    let s = res.to_styled_str();
+                    println!("{}", s.ansi());
+                    IotaClientCommandResult::NoOutput
+                }
+            },
         };
         Ok(ret.prerender_clever_errors(context).await)
     }
@@ -2203,6 +2232,9 @@ impl Display for IotaClientCommandResult {
                 };
                 writeln!(writer, "{}", raw_object)?;
             }
+            IotaClientCommandResult::RemoveAddress(address) => {
+                write!(writer, "Removed address \"{address}\" from keystore.")?
+            }
             IotaClientCommandResult::SerializedUnsignedTransaction(tx_data) => {
                 writeln!(
                     writer,
@@ -2442,6 +2474,7 @@ impl IotaClientCommandResult {
             | IotaClientCommandResult::Object(_)
             | IotaClientCommandResult::Objects(_)
             | IotaClientCommandResult::RawObject(_)
+            | IotaClientCommandResult::RemoveAddress(_)
             | IotaClientCommandResult::SerializedSignedTransaction(_)
             | IotaClientCommandResult::SerializedUnsignedTransaction(_)
             | IotaClientCommandResult::Switch(_)
@@ -2596,6 +2629,7 @@ pub enum IotaClientCommandResult {
     Object(IotaObjectResponse),
     Objects(Vec<IotaObjectResponse>),
     RawObject(IotaObjectResponse),
+    RemoveAddress(IotaAddress),
     SerializedSignedTransaction(SenderSignedData),
     SerializedUnsignedTransaction(TransactionData),
     Switch(SwitchResponse),

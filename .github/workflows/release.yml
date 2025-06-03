@@ -73,14 +73,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: self-hosted-x64
+          - os: ubuntu-22.04
             os_type: linux-x86_64
-          - os: self-hosted-arm64
-            os_type: linux-arm64
           - os: macos-latest
             os_type: macos-arm64
-          - os: windows-latest
-            os_type: windows-x86_64
       fail-fast: false
     runs-on: ${{ matrix.os }}
     needs: generate-tag
@@ -158,7 +154,6 @@ jobs:
 
       - name: Cargo build for ${{ matrix.os_type }} platform
         shell: bash
-        # Currently building in release mode, but we could also have debug builds for testing
         run: |
           [ -f ~/.cargo/env ] && source ~/.cargo/env ; cargo build --bin iota --release --features indexer,gen-completions,tracing,iota-names
 
