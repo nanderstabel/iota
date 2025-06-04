@@ -872,6 +872,13 @@ mod tests {
         }
     }
 
+    fn malformed_block_for_testing() -> ExtendedSerializedBlock {
+        ExtendedSerializedBlock {
+            block: Bytes::new(),
+            excluded_ancestors: vec![],
+        }
+    }
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_handle_send_block() {
         let (context, _keys) = Context::new_for_test(4);
@@ -1027,22 +1034,55 @@ mod tests {
             store,
         ));
 
-        let service = authority_service.clone();
-        let serialized = ExtendedSerializedBlock {
-            block: Bytes::new(),
-            excluded_ancestors: vec![],
-        };
+        // Handles a malformed block from a certain peer
         let peer = context.committee.to_authority_index(0).unwrap();
+        let service = authority_service.clone();
         let join_handle = tokio::spawn(async move {
-            service.handle_send_block(peer, serialized).await.unwrap();
+            service
+                .handle_send_block(peer, malformed_block_for_testing())
+                .await
+                .unwrap();
         });
-        let result = join_handle.await;
+        let _result = join_handle.await;
 
+        // Checks that the block was not added to core_dispatcher but counted in
+        // malformed_blocks_counter
         let blocks = core_dispatcher.get_blocks();
         let malformed_blocks_counter = &context
             .scoring_metrics
-            .get_syntactically_invalid_blocks(AuthorityIndex::new_for_test(0));
+            .get_syntactically_invalid_blocks(peer);
         assert_eq!(blocks.len(), 0);
         assert_eq!(malformed_blocks_counter - 1u64, 0);
+
+        // Handles three additional malformed blocks from a different peer
+        let second_peer = context.committee.to_authority_index(1).unwrap();
+        let mut handle_vec = Vec::new();
+        for _i in 0..3 {
+            let service = authority_service.clone();
+            let handle = tokio::spawn(async move {
+                service
+                    .handle_send_block(second_peer, malformed_block_for_testing())
+                    .await
+                    .unwrap();
+            });
+            handle_vec.push(handle);
+        }
+        for handle in handle_vec {
+            let _result = handle.await;
+        }
+
+        // Checks that the blocks were not added to core_dispatcher but counted in
+        // malformed_blocks_counter for second_peer. Also checks that this counter did
+        // not change for the first peer
+        let blocks = core_dispatcher.get_blocks();
+        let malformed_blocks_counter_old_peer = &context
+            .scoring_metrics
+            .get_syntactically_invalid_blocks(peer);
+        let malformed_blocks_counter_new_peer = &context
+            .scoring_metrics
+            .get_syntactically_invalid_blocks(second_peer);
+        assert_eq!(blocks.len(), 0);
+        assert_eq!(malformed_blocks_counter_old_peer - 1u64, 0);
+        assert_eq!(malformed_blocks_counter_new_peer - 3u64, 0);
     }
 }
