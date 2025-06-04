@@ -716,6 +716,13 @@ impl AuthorityEpochTables {
             .collect()
     }
 
+    pub fn get_all_transactions(&self) -> Vec<TransactionDigest> {
+        self.signed_transactions
+            .unbounded_iter()
+            .map(|(k, _v)| k)
+            .collect()
+    }
+
     pub fn reset_db_for_execution_since_genesis(&self) -> IotaResult {
         // TODO: Add new tables that get added to the db automatically
         self.executed_transactions_to_checkpoint.unsafe_clear()?;
@@ -1886,6 +1893,7 @@ impl AuthorityPerEpochStore {
                     .insert(*cert.digest());
             }
         }
+
         Ok(())
     }
 

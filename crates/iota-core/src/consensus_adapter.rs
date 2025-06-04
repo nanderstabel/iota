@@ -8,7 +8,7 @@ use std::{
     ops::Deref,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -249,6 +249,7 @@ pub struct ConsensusAdapter {
     /// Semaphore limiting parallel submissions to consensus
     submit_semaphore: Semaphore,
     latency_observer: LatencyObserver,
+    pub submit_counter: AtomicUsize,
 }
 
 pub trait CheckConnection: Send + Sync {
@@ -296,6 +297,7 @@ impl ConsensusAdapter {
             metrics,
             submit_semaphore: Semaphore::new(max_pending_local_submissions),
             latency_observer: LatencyObserver::new(),
+            submit_counter: AtomicUsize::new(0),
         }
     }
 
@@ -592,13 +594,15 @@ impl ConsensusAdapter {
         transactions: &[ConsensusTransaction],
         epoch_store: &Arc<AuthorityPerEpochStore>,
     ) -> JoinHandle<()> {
-        // Reconfiguration lock is dropped when pending_consensus_transactions is
-        // persisted, before it is handled by consensus
+        // Increment the counter
+        let count = self.submit_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        if count == 2 {
+            panic!("submit_unchecked called twice!");
+        }
+
         let async_stage = self
             .clone()
             .submit_and_wait(transactions.to_vec(), epoch_store.clone());
-        // Number of these tasks is weakly limited based on `num_inflight_transactions`.
-        // (Limit is not applied atomically, and only to user transactions.)
         let join_handle = spawn_monitored_task!(async_stage);
         join_handle
     }

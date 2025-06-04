@@ -278,12 +278,13 @@ impl AuthorityStore {
             .database_is_empty()
             .expect("database read should not fail at init.")
         {
+            info!("Initializing authority store with genesis data");
             // Initialize with genesis data
             // First insert genesis objects
             store
                 .bulk_insert_genesis_objects(genesis.objects())
                 .expect("cannot bulk insert genesis objects");
-
+            // panic!("db initialize failed");
             // Then insert txn and effects of genesis
             let transaction = VerifiedTransaction::new_unchecked(genesis.transaction().clone());
             store
@@ -291,6 +292,8 @@ impl AuthorityStore {
                 .transactions
                 .insert(transaction.digest(), transaction.serializable_ref())
                 .expect("cannot insert genesis transaction");
+            // panic!("db initialize failed");
+
             store
                 .perpetual_tables
                 .effects
@@ -397,6 +400,20 @@ impl AuthorityStore {
         Ok(self.perpetual_tables.effects.get(effects_digest)?)
     }
 
+    pub fn get_effects_keys(
+            &self
+        ) -> IotaResult<Vec<TransactionEffectsDigest>> {
+            self.perpetual_tables
+                .effects
+                .keys()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into)
+        }
+
+    pub fn get_effects_count(&self) -> IotaResult<usize> {
+        Ok(self.perpetual_tables.effects.keys().collect_vec().len())
+    }
+
     /// Returns true if we have an effects structure for this transaction digest
     pub fn effects_exists(&self, effects_digest: &TransactionEffectsDigest) -> IotaResult<bool> {
         self.perpetual_tables
@@ -416,6 +433,15 @@ impl AuthorityStore {
             .map_ok(|(_, event)| event)
             .collect::<Result<Vec<_>, TypedStoreError>>()?;
         Ok(data.is_empty().not().then_some(TransactionEvents { data }))
+    }
+
+    pub fn get_events_count(
+        &self
+    ) -> usize {
+        self
+            .perpetual_tables
+            .events
+            .keys().collect_vec().len()
     }
 
     pub fn multi_get_events(
@@ -1497,6 +1523,15 @@ impl AuthorityStore {
             .transactions
             .get(tx_digest)
             .map(|v| v.map(|v| v.into()))
+    }
+
+    pub fn get_transaction_count(
+        &self
+    ) -> usize {
+        self.perpetual_tables
+            .transactions
+            .keys()
+            .count()
     }
 
     /// This function reads the DB directly to get the system state object.

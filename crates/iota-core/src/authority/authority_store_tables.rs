@@ -397,6 +397,10 @@ impl AuthorityPerpetualTables {
         Ok(self.effects.get(&effect_digest)?)
     }
 
+    pub fn get_effects_count(&self) -> usize {
+        self.effects.keys().collect_vec().len()
+    }
+
     pub fn get_checkpoint_sequence_number(
         &self,
         digest: &TransactionDigest,

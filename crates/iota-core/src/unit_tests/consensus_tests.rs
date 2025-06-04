@@ -2,6 +2,7 @@
 // Modifications Copyright (c) 2024 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
+use core::panic;
 use std::collections::HashSet;
 
 use consensus_core::{BlockRef, BlockStatus};
@@ -22,16 +23,14 @@ use iota_types::{
     },
     utils::{make_committee_key, to_sender_signed_transaction},
 };
+use more_asserts::assert_gt;
 use move_core_types::{account_address::AccountAddress, ident_str};
 use parking_lot::Mutex;
 use rand::{SeedableRng, rngs::StdRng};
 
 use super::*;
 use crate::{
-    authority::{AuthorityState, authority_tests::init_state_with_objects},
-    checkpoints::CheckpointServiceNoop,
-    consensus_handler::SequencedConsensusTransaction,
-    mock_consensus::with_block_status,
+    authority::{authority_tests::init_state_with_objects, AuthorityState}, checkpoints::CheckpointServiceNoop, consensus_handler::SequencedConsensusTransaction, epoch, mock_consensus::with_block_status
 };
 
 /// Fixture: a few test gas objects.
@@ -369,4 +368,130 @@ async fn submit_checkpoint_signature_to_consensus_adapter() {
         )
         .unwrap();
     waiter.await.unwrap();
+}
+
+const DIR: &str = "./tmp";
+use once_cell::sync::Lazy;
+pub static TEST_GAS_OBJECTS: Lazy<Vec<Object>> = Lazy::new(|| test_gas_objects());
+pub static SHARED_OBJECT: Lazy<Object> = Lazy::new(|| Object::shared_for_testing());
+
+
+#[tokio::test]
+async fn submit_transaction_panic() {
+    use crate::authority::test_authority_builder::TestAuthorityBuilder;
+    use iota_swarm_config::network_config_builder::ConfigBuilder;
+
+    telemetry_subscribers::init_for_testing();
+
+    // Use a persistent temp dir for the DB
+    let db_path = std::path::Path::new(DIR).to_path_buf();
+
+    // Prepare test objects
+    let mut objects = TEST_GAS_OBJECTS.clone();
+    let shared_object = SHARED_OBJECT.clone();
+    objects.push(shared_object.clone());
+
+    let network_config = ConfigBuilder::new_with_temp_dir()
+            .with_objects(objects)
+            .build();
+    println!("{:?}",network_config.genesis.effects().execution_digests());
+    // Build AuthorityState with fixed db path and custom genesis
+    let state = TestAuthorityBuilder::new()
+        .with_store_base_path(db_path.clone())
+        .with_network_config(&network_config, 0)
+        .build()
+        .await;
+    
+    // let store = state.database_for_testing();
+    // assert_eq!(store.get_events_count(), 0);
+    
+    
+
+}
+
+#[tokio::test]
+async fn restart() {
+    use crate::authority::test_authority_builder::TestAuthorityBuilder;
+    use iota_swarm_config::network_config_builder::ConfigBuilder;
+
+    telemetry_subscribers::init_for_testing();
+
+    // Use a persistent temp dir for the DB
+    let db_path = std::path::Path::new(DIR).to_path_buf();
+    // Prepare test objects
+    let mut objects = TEST_GAS_OBJECTS.clone();
+    let shared_object = SHARED_OBJECT.clone();
+    objects.push(shared_object.clone());
+    
+    let network_config = ConfigBuilder::new_with_temp_dir()
+            .with_objects(objects)
+            .build();
+    // Build AuthorityState with fixed db path and custom genesis
+    let state = TestAuthorityBuilder::new()
+        .with_store_base_path(db_path.clone())
+        .with_network_config(&network_config, 0)
+        .build()
+        .await;
+
+    // // Ensure the previous task has completed
+    // let state = TestAuthorityBuilder::new()
+    //     .with_store_base_path(db_path.clone())
+    //     .with_starting_objects(&objects)
+    //     .build()
+    //     .await;
+    let epoch_store = state.epoch_store_for_testing();
+
+    
+
+    // The transaction should still be pending after recovery
+    let pending = epoch_store.get_all_pending_consensus_transactions();
+    assert_eq!(pending.len(), 0);
+
+    // Create 5 certificates/transactions
+    let certificates = test_certificates(&state, shared_object.clone()).await;
+
+    let block_status_receivers = (0..5)
+        .map(|_| with_block_status(BlockStatus::Sequenced(BlockRef::MIN)))
+        .collect::<Vec<_>>();
+    let adapter = Arc::new(make_consensus_adapter_for_test(
+        state.clone(),
+        HashSet::new(),
+        false,
+        block_status_receivers,
+    ));
+
+    let epoch_store = Arc::new(state.epoch_store_for_testing());
+    let transactions: Vec<_> = certificates
+        .iter()
+        .map(|cert| ConsensusTransaction::new_certificate_message(&state.name, cert.clone()))
+        .collect();
+    // Submit the transaction, but simulate a panic after persistence
+
+    let mut handles = Vec::new();
+    for transaction in transactions.clone() {
+        let adapter = Arc::clone(&adapter);
+        let epoch_store = Arc::clone(&epoch_store);
+        handles.push(tokio::task::spawn(async move {
+            let _ = adapter
+                .submit(
+                    transaction,
+                    Some(&epoch_store.get_reconfig_state_read_lock_guard()),
+                    &epoch_store,
+                )
+                .unwrap();
+        }));
+    }
+    
+    let store = state.database_for_testing();
+    println!("{:?}", store.get_effects_keys()); 
+
+    // Simulate crash: drop state, then reload from disk    
+    let epoch_store = state.epoch_store_for_testing(); 
+  
+    let all = epoch_store.tables().unwrap().get_all_transactions();
+    assert_eq!(all.len(), 4);
+
+    let all = epoch_store.tables().unwrap().get_all_transactions();
+    assert_eq!(all.len(), 4);
+    
 }
