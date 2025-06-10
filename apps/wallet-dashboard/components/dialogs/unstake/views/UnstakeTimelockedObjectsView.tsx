@@ -3,14 +3,10 @@
 
 import { StakeRewardsPanel, ValidatorStakingData } from '@/components';
 import { DialogLayout, DialogLayoutBody, DialogLayoutFooter } from '../../layout';
-import { useGetLatestIotaSystemState, Validator } from '@iota/core';
+import { ExtendedDelegatedTimelockedStake, Validator } from '@iota/core';
 import { useNewUnstakeTimelockedTransaction } from '@/hooks';
 import { Collapsible, TimeUnit, useFormatCoin, useTimeAgo, toast } from '@iota/core';
-import {
-    ExtendedDelegatedTimelockedStake,
-    TimelockedStakedObjectsGrouped,
-    isSizeExceededError,
-} from '@/lib/utils';
+import { TimelockedStakedObjectsGrouped, isSizeExceededError } from '@/lib/utils';
 import { formatAddress } from '@iota/iota-sdk/utils';
 import {
     Panel,
@@ -23,7 +19,11 @@ import {
     InfoBoxStyle,
     InfoBoxType,
 } from '@iota/apps-ui-kit';
-import { useCurrentAccount, useSignAndExecuteTransaction } from '@iota/dapp-kit';
+import {
+    useCurrentAccount,
+    useIotaClientQuery,
+    useSignAndExecuteTransaction,
+} from '@iota/dapp-kit';
 import { IotaSignAndExecuteTransactionOutput } from '@iota/wallet-standard';
 import { ampli } from '@/lib/utils/analytics';
 import { Warning } from '@iota/apps-ui-icons';
@@ -47,7 +47,7 @@ export function UnstakeTimelockedObjectsView({
     const reductionSize = useRef(0);
     const [isMaxTransactionSizeError, setIsMaxTransactionSizeError] = useState(false);
     const activeAddress = useCurrentAccount()?.address ?? '';
-    const { data: systemState } = useGetLatestIotaSystemState();
+    const { data: systemState } = useIotaClientQuery('getLatestIotaSystemState');
 
     const stakes = (() => {
         if (isMaxTransactionSizeError) {

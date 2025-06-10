@@ -11,7 +11,7 @@
 // TODO: add example usage once constructor macros are implemented.
 // (For now, look at tests for an example.)
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use prometheus::{core, proto};
 
 /// A Prometheus metric whose value is computed at collection time by the
@@ -51,7 +51,7 @@ where
 
     pub fn metric(&self) -> proto::Metric {
         let mut m = proto::Metric::default();
-        m.set_label(protobuf::RepeatedField::from_vec(self.label_pairs.clone()));
+        m.set_label(self.label_pairs.clone());
 
         let val = (self.f)().into_f64();
         match self.value_type {
@@ -85,7 +85,7 @@ where
         m.set_name(self.desc.fq_name.clone());
         m.set_help(self.desc.help.clone());
         m.set_field_type(self.value_type.metric_type());
-        m.set_metric(protobuf::RepeatedField::from_vec(vec![self.metric()]));
+        m.set_metric(vec![self.metric()]);
         vec![m]
     }
 }
@@ -108,7 +108,7 @@ impl ValueType {
 
 pub fn make_label_pairs(desc: &core::Desc, label_values: &[&str]) -> Result<Vec<proto::LabelPair>> {
     if desc.variable_labels.len() != label_values.len() {
-        return Err(anyhow!("inconsistent cardinality"));
+        bail!("inconsistent cardinality");
     }
 
     let total_len = desc.variable_labels.len() + desc.const_label_pairs.len();

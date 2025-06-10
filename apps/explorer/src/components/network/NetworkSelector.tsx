@@ -13,7 +13,6 @@ import { type NetworkId, getAllNetworks } from '@iota/iota-sdk/client';
 import { Button, ButtonSize, ButtonType, Dropdown, ListItem } from '@iota/apps-ui-kit';
 import { ArrowDown, CheckmarkFilled } from '@iota/apps-ui-icons';
 import { Transition } from '@headlessui/react';
-import { useGetLatestIotaSystemState } from '@iota/core';
 
 interface NetworkOption {
     id: string;
@@ -23,7 +22,7 @@ interface NetworkOption {
 export function NetworkSelector(): JSX.Element {
     const elementRef = useRef<HTMLDivElement>(null);
     const [network, setNetwork] = useContext(NetworkContext);
-    const { data } = useGetLatestIotaSystemState();
+    const { data } = useIotaClientQuery('getLatestIotaSystemState');
     const { data: binaryVersion } = useIotaClientQuery('getRpcApiVersion');
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
@@ -86,14 +85,14 @@ export function NetworkSelector(): JSX.Element {
             />
             <Transition
                 show={isDropdownOpen}
-                enter="transition duration-300"
-                enterFrom="opacity-0 scale-75"
-                enterTo="opacity-100 scale-100"
-                leave="transition duration-150"
-                leaveFrom="opacity-100 scale-100"
-                leaveTo="opacity-0 scale-75"
+                enter="transition ease-in duration-100"
+                enterFrom="opacity-0 translate-y-2"
+                enterTo="opacity-100 translate-y-0"
+                leave="transition ease-in duration-150"
+                leaveFrom="opacity-100 translate-y-0"
+                leaveTo="opacity-0 translate-y-2"
             >
-                <div className="absolute right-0 mt-xs w-52">
+                <div className="absolute right-0 z-50 mt-xs w-52">
                     <Dropdown>
                         {networks.map((network, idx) => (
                             <ListItem

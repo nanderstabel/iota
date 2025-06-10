@@ -588,7 +588,7 @@ impl FunctionDefinition {
         self.code.is_none()
     }
 
-    // Deprecated public bit, deprecated in favor a the Visibility enum
+    // Deprecated public bit, deprecated in favor of the Visibility enum
     pub const DEPRECATED_PUBLIC_BIT: u8 = 0b01;
 
     /// A native function implemented in Rust.
@@ -2828,9 +2828,11 @@ impl CompiledModule {
             Reference(_) | MutableReference(_) => Ok(AbilitySet::REFERENCES),
             Signer => Ok(AbilitySet::SIGNER),
             TypeParameter(idx) => Ok(constraints[*idx as usize]),
-            Vector(ty) => AbilitySet::polymorphic_abilities(AbilitySet::VECTOR, vec![false], vec![
-                self.abilities(ty, constraints)?,
-            ]),
+            Vector(ty) => AbilitySet::polymorphic_abilities(
+                AbilitySet::VECTOR,
+                vec![false],
+                vec![self.abilities(ty, constraints)?],
+            ),
             Datatype(idx) => {
                 let sh = self.datatype_handle_at(*idx);
                 Ok(sh.abilities)

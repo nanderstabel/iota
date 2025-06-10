@@ -16,14 +16,16 @@ import clsx from 'clsx';
 import { ValidatorLink } from '~/components/ui';
 
 interface GenerateValidatorsTableColumnsArgs {
+    allValidators?: IotaValidatorSummary[];
     committeeMembers?: string[];
     atRiskValidators?: [string, string][];
+    maxCommitteeSize?: number;
     validatorEvents?: IotaEvent[];
     rollingAverageApys?: ApyByValidator;
-    limit?: number;
     showValidatorIcon?: boolean;
     includeColumns?: string[];
     highlightValidatorName?: boolean;
+    currentEpoch?: string;
 }
 
 function ValidatorWithImage({
@@ -87,14 +89,20 @@ function ValidatorWithImage({
 }
 
 export function generateValidatorsTableColumns({
+    allValidators = [],
     committeeMembers = [],
     atRiskValidators = [],
+    maxCommitteeSize,
     validatorEvents = [],
     rollingAverageApys,
     showValidatorIcon = true,
     includeColumns,
     highlightValidatorName,
+    currentEpoch,
 }: GenerateValidatorsTableColumnsArgs): ColumnDef<IotaValidatorSummaryExtended>[] {
+    const validatorsSortedByStake = allValidators.toSorted(sortByStakingBalanceDesc);
+    const topValidators = validatorsSortedByStake.slice(0, maxCommitteeSize);
+
     let columns: ColumnDef<IotaValidatorSummaryExtended>[] = [
         {
             header: 'Name',
@@ -131,7 +139,6 @@ export function generateValidatorsTableColumns({
                 );
             },
         },
-
         {
             header: 'Stake',
             accessorKey: 'stakingPoolIotaBalance',
@@ -189,21 +196,51 @@ export function generateValidatorsTableColumns({
             },
         },
         {
+            header: 'Next Epoch Commission',
+            accessorKey: 'nextEpochCommissionRate',
+            enableSorting: true,
+            sortingFn: sortByNumber,
+            cell({ getValue }) {
+                return (
+                    <TableCellBase>
+                        <TableCellText>{`${Number(getValue()) / 100}%`}</TableCellText>
+                    </TableCellBase>
+                );
+            },
+        },
+        {
+            header: 'Next Epoch Stake',
+            accessorKey: 'nextEpochStake',
+            id: 'nextEpochStake',
+            enableSorting: true,
+            sortingFn: (rowA, rowB, columnId) =>
+                BigInt(rowA.getValue(columnId)) - BigInt(rowB.getValue(columnId)) > 0 ? 1 : -1,
+            cell({ getValue }) {
+                const nextEpochStake = getValue<string>();
+                return (
+                    <TableCellBase>
+                        <StakeColumn stake={nextEpochStake} />
+                    </TableCellBase>
+                );
+            },
+        },
+        {
             header: 'Last Epoch Rewards',
             accessorKey: 'lastReward',
             id: 'lastReward',
             enableSorting: true,
             sortingFn: (rowA, rowB) => {
-                const lastRewardA = getLastReward(validatorEvents, rowA);
-                const lastRewardB = getLastReward(validatorEvents, rowB);
+                const lastRewardA = getLastReward(validatorEvents, rowA, currentEpoch);
+                const lastRewardB = getLastReward(validatorEvents, rowB, currentEpoch);
 
+                if (lastRewardA === null && lastRewardB === null) return 0;
                 if (lastRewardA === null) return 1;
                 if (lastRewardB === null) return -1;
 
-                return lastRewardA > lastRewardB ? 1 : -1;
+                return lastRewardA > lastRewardB ? -1 : 1;
             },
             cell({ row }) {
-                const lastReward = getLastReward(validatorEvents, row);
+                const lastReward = getLastReward(validatorEvents, row, currentEpoch);
                 return (
                     <TableCellBase>
                         <TableCellText>
@@ -229,11 +266,10 @@ export function generateValidatorsTableColumns({
                 );
             },
         },
-
         {
             header: 'Status',
-            accessorKey: 'atRisk',
-            id: 'atRisk',
+            accessorKey: 'status',
+            id: 'status',
             enableSorting: true,
             sortingFn: (rowA, rowB) => {
                 const { label: labelA } = determineRisk(committeeMembers, atRiskValidators, rowA);
@@ -241,7 +277,7 @@ export function generateValidatorsTableColumns({
                 return sortByString(labelA, labelB);
             },
             cell({ row }) {
-                const { atRisk, label, isPending, isCommitteeMember } = determineRisk(
+                const { atRisk, label, isPending } = determineRisk(
                     committeeMembers,
                     atRiskValidators,
                     row,
@@ -254,14 +290,67 @@ export function generateValidatorsTableColumns({
                         </TableCellBase>
                     );
                 }
+
                 return (
                     <TableCellBase>
                         <Badge
                             type={
-                                atRisk === null && isCommitteeMember
-                                    ? BadgeType.PrimarySoft
-                                    : BadgeType.Neutral
+                                atRisk === null
+                                    ? BadgeType.Success
+                                    : atRisk > 1
+                                      ? BadgeType.Warning
+                                      : BadgeType.Error
                             }
+                            label={label}
+                        />
+                    </TableCellBase>
+                );
+            },
+        },
+        {
+            header: 'Current Epoch Rewards',
+            accessorKey: 'isEarningCurrent',
+            id: 'isEarningCurrent',
+            enableSorting: true,
+            cell({ row }) {
+                const isCommitteeMember = committeeMembers.find(
+                    (committeeMemberAddress) => committeeMemberAddress === row.original.iotaAddress,
+                );
+                const label = isCommitteeMember ? 'Earning' : 'Not Earning';
+                return (
+                    <TableCellBase>
+                        <Badge
+                            type={isCommitteeMember ? BadgeType.PrimarySoft : BadgeType.Neutral}
+                            label={label}
+                        />
+                    </TableCellBase>
+                );
+            },
+        },
+        {
+            header: 'Next Epoch Rewards',
+            accessorKey: 'isEarningNext',
+            id: 'isEarningNext',
+            enableSorting: true,
+            cell({ row }) {
+                const { atRisk } = determineRisk(committeeMembers, atRiskValidators, row);
+
+                const isInTopStakers = !!topValidators.find(
+                    (v) => v.iotaAddress === row.original.iotaAddress,
+                );
+
+                // if its active or pending validator (all validators in this context are either active or pending),
+                // not at high risk (high risk, not normal risk),
+                // and is part of the top X stakers,
+                // it will generate rewards in the next epoch, otherwise not.
+                const isEarningNext = (atRisk === null || atRisk > 1) && isInTopStakers;
+
+                const label = isEarningNext ? 'Earning' : 'Not Earning';
+
+                return (
+                    <TableCellBase>
+                        <Badge
+                            type={isEarningNext ? BadgeType.PrimarySoft : BadgeType.Neutral}
                             label={label}
                         />
                     </TableCellBase>
@@ -288,12 +377,16 @@ function sortByNumber(
 ) {
     return Number(rowA.getValue(columnId)) - Number(rowB.getValue(columnId)) > 0 ? 1 : -1;
 }
+function sortByStakingBalanceDesc(left: IotaValidatorSummary, right: IotaValidatorSummary) {
+    return BigInt(left.stakingPoolIotaBalance) > BigInt(right.stakingPoolIotaBalance) ? -1 : 1;
+}
 function getLastReward(
     validatorEvents: IotaEvent[],
     row: Row<IotaValidatorSummaryExtended>,
+    currentEpoch?: string,
 ): number | null {
     const { original: validator } = row;
-    const event = getValidatorMoveEvent(validatorEvents, validator.iotaAddress) as {
+    const event = getValidatorMoveEvent(validatorEvents, validator.iotaAddress, currentEpoch) as {
         pool_staking_reward?: string;
     };
     return event?.pool_staking_reward ? Number(event.pool_staking_reward) : null;
@@ -314,9 +407,7 @@ function determineRisk(
     const label = isPending
         ? 'Pending'
         : atRisk === null
-          ? isCommitteeMember
-              ? 'Committee'
-              : 'Active (not in committee)'
+          ? 'Active'
           : atRisk > 1
             ? `At Risk in ${atRisk} epochs`
             : 'At Risk next epoch';
