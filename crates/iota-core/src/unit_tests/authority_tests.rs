@@ -54,6 +54,7 @@ use rand::{
     seq::SliceRandom,
 };
 use serde_json::json;
+use telemetry_subscribers::TelemetryConfig;
 
 use super::*;
 pub use crate::authority::authority_test_utils::*;
@@ -2910,6 +2911,111 @@ async fn test_account_state_unknown_account() {
 }
 
 #[tokio::test]
+async fn test_authority_different_version() {
+    telemetry_subscribers::init_for_testing();
+
+    async fn init_state(
+        genesis: &Genesis,
+        authority_key: AuthorityKeyPair,
+        store: Arc<AuthorityStore>,
+    ) -> Arc<AuthorityState> {
+        TestAuthorityBuilder::new()
+            .with_genesis_and_keypair(genesis, &authority_key)
+            .with_store(store)
+            .build()
+            .await
+    }
+
+    let seed = [1u8; 32];
+    let (genesis, authority_key) = init_state_parameters_from_rng(&mut StdRng::from_seed(seed));
+    let committee = genesis.committee().unwrap();
+
+    // Create a random directory to store the DB
+    let dir = env::temp_dir();
+    let path = dir.join(format!("DB_{:?}", ObjectID::random()));
+    fs::create_dir(&path).unwrap();
+
+    let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(&path, None));
+    // Create an authority
+    let store =
+        AuthorityStore::open_with_committee_for_testing(perpetual_tables, &committee, &genesis, 0)
+            .await
+            .unwrap();
+    // disable indexer to prevent the node from indexing
+    let authority = TestAuthorityBuilder::new()
+        .with_genesis_and_keypair(&genesis, &authority_key)
+        .with_store(store)
+        .disable_indexer()
+        .build()
+        .await;
+    // let authority = init_state(&genesis, authority_key, store).await;
+
+    // Create an object
+    let recipient = dbg_addr(2);
+    let object_id = ObjectID::random();
+    let obj = Object::with_id_owner_version_for_testing(object_id, 100.into(), recipient);
+
+    // Create an object, this will have a different version
+    let recipient1 = dbg_addr(3);
+    let object_id1 = ObjectID::random();
+    let obj1 = Object::with_id_owner_version_for_testing(object_id1, 10.into(), recipient1);
+
+    // Store an object
+    authority.insert_genesis_object(obj).await;
+    authority.insert_genesis_object(obj1).await;
+
+    // Close the authority
+    drop(authority);
+
+    // TODO: The right fix is to invoke some function on DBMap and release the
+    // rocksdb arc references being held in the background thread but this will
+    // suffice for now
+    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+
+    // Reopen the same authority with the same path
+    let seed = [1u8; 32];
+
+    let dir = iota_macros::nondeterministic!(tempfile::TempDir::new().unwrap());
+    let mut objects = Vec::new();
+    objects.push(Object::with_id_owner_version_for_testing(
+        object_id1,
+        1.into(),
+        recipient1,
+    ));
+    let network_config = iota_swarm_config::network_config_builder::ConfigBuilder::new(&dir)
+        .rng(&mut StdRng::from_seed(seed))
+        .with_objects(objects)
+        .build();
+    let genesis = network_config.genesis;
+    let authority_key = network_config.validator_configs[0]
+        .authority_key_pair()
+        .copy();
+
+    let committee = genesis.committee().unwrap();
+    let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(&path, None));
+    let store =
+        AuthorityStore::open_with_committee_for_testing(perpetual_tables, &committee, &genesis, 0)
+            .await
+            .unwrap();
+
+    let authority2 = init_state(&genesis, authority_key, store).await;
+    let obj2 = authority2.get_object(&object_id).await.unwrap().unwrap();
+
+    // Check the object is present
+    assert_eq!(obj2.id(), object_id);
+    assert_eq!(obj2.owner, recipient);
+
+    // NOTE: We inserted different version for the object, and it panic at
+    // get_object, bc the version is different from the one in the cache.
+    let obj3 = authority2.get_object(&object_id1).await.unwrap().unwrap();
+
+    // // Check the object is present
+    assert_eq!(obj3.id(), object_id1);
+    assert_eq!(obj3.owner, recipient1);
+    assert_eq!(obj3.version(), 1.into());
+}
+
+#[tokio::test]
 async fn test_authority_persist() {
     async fn init_state(
         genesis: &Genesis,
@@ -2925,6 +3031,7 @@ async fn test_authority_persist() {
 
     let seed = [1u8; 32];
     let (genesis, authority_key) = init_state_parameters_from_rng(&mut StdRng::from_seed(seed));
+    println!("{:?}", genesis.objects());
     let committee = genesis.committee().unwrap();
 
     // Create a random directory to store the DB
