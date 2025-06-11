@@ -331,6 +331,10 @@ const config = {
             to: "iota-evm",
           },
           {
+            label: "IOTA Notarization",
+            to: "iota-notarization",
+          },
+          {
             type: 'custom-WalletConnectButton',
             position: 'right',
           },
