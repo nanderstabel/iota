@@ -31,6 +31,7 @@ use crate::{
     stake_aggregator::{QuorumThreshold, StakeAggregator},
     storage::Store,
     synchronizer::SynchronizerHandle,
+    transactions_synchronizer::TransactionsSynchronizerHandle,
 };
 
 pub(crate) const COMMIT_LAG_MULTIPLIER: u32 = 5;
@@ -42,6 +43,7 @@ pub(crate) struct AuthorityService<C: CoreThreadDispatcher> {
     commit_vote_monitor: Arc<CommitVoteMonitor>,
     block_verifier: Arc<dyn BlockVerifier>,
     synchronizer: Arc<SynchronizerHandle>,
+    transactions_synchronizer: Arc<TransactionsSynchronizerHandle>,
     core_dispatcher: Arc<C>,
     rx_block_broadcaster: broadcast::Receiver<VerifiedBlock>,
     subscription_counter: Arc<SubscriptionCounter>,
@@ -55,6 +57,7 @@ impl<C: CoreThreadDispatcher> AuthorityService<C> {
         block_verifier: Arc<dyn BlockVerifier>,
         commit_vote_monitor: Arc<CommitVoteMonitor>,
         synchronizer: Arc<SynchronizerHandle>,
+        transactions_synchronizer: Arc<TransactionsSynchronizerHandle>,
         core_dispatcher: Arc<C>,
         rx_block_broadcaster: broadcast::Receiver<VerifiedBlock>,
         dag_state: Arc<RwLock<DagState>>,
@@ -69,6 +72,7 @@ impl<C: CoreThreadDispatcher> AuthorityService<C> {
             block_verifier,
             commit_vote_monitor,
             synchronizer,
+            transactions_synchronizer,
             core_dispatcher,
             rx_block_broadcaster,
             subscription_counter,
@@ -257,10 +261,21 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             // schedule the fetching of them from this peer
             if let Err(err) = self
                 .synchronizer
-                .fetch_block_headers(missing_ancestors, peer)
+                .fetch_block_headers(missing_ancestors.clone(), peer)
                 .await
             {
                 warn!("Errored while trying to fetch missing ancestors via synchronizer: {err}");
+            }
+
+            // Also fetch missing transactions for these blocks
+            if let Err(err) = self
+                .transactions_synchronizer
+                .fetch_transactions(missing_ancestors, peer)
+                .await
+            {
+                warn!(
+                    "Errored while trying to fetch missing transactions via transactions synchronizer: {err}"
+                );
             }
         }
         Ok(())
@@ -559,6 +574,43 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
 
         Ok((highest_received_rounds, highest_accepted_rounds))
     }
+
+    async fn handle_fetch_transactions(
+        &self,
+        peer: AuthorityIndex,
+        block_refs: Vec<BlockRef>,
+    ) -> ConsensusResult<Vec<Bytes>> {
+        fail_point_async!("consensus-rpc-response");
+
+        if block_refs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Some quick validation of the requested block refs
+        for block in &block_refs {
+            if !self.context.committee.is_valid_index(block.author) {
+                return Err(ConsensusError::InvalidAuthorityIndex {
+                    index: block.author,
+                    max: self.context.committee.size(),
+                });
+            }
+            if block.round == GENESIS_ROUND {
+                return Err(ConsensusError::UnexpectedGenesisBlockRequested);
+            }
+        }
+
+        // Get the transactions from the dag state
+        let transactions = self.dag_state.read().get_transactions(&block_refs);
+
+        // Return the serialized transactions
+        let result = transactions
+            .into_iter()
+            .flatten()
+            .map(|transaction| transaction.serialized().clone())
+            .collect::<Vec<_>>();
+
+        Ok(result)
+    }
 }
 
 struct Counter {
@@ -762,6 +814,7 @@ mod tests {
         storage::mem_store::MemStore,
         synchronizer::Synchronizer,
         test_dag_builder::DagBuilder,
+        transactions_synchronizer::TransactionsSynchronizer,
     };
 
     #[derive(Default)]
@@ -816,6 +869,15 @@ mod tests {
         ) -> ConsensusResult<Vec<Bytes>> {
             unimplemented!("Unimplemented")
         }
+
+        async fn fetch_transactions(
+            &self,
+            _peer: AuthorityIndex,
+            _block_refs: Vec<BlockRef>,
+            _timeout: Duration,
+        ) -> ConsensusResult<Vec<Bytes>> {
+            unimplemented!("Unimplemented")
+        }
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -830,7 +892,7 @@ mod tests {
         let store = Arc::new(MemStore::new());
         let dag_state = Arc::new(RwLock::new(DagState::new(context.clone(), store.clone())));
         let synchronizer = Synchronizer::start(
-            network_client,
+            network_client.clone(),
             context.clone(),
             core_dispatcher.clone(),
             commit_vote_monitor.clone(),
@@ -838,11 +900,19 @@ mod tests {
             dag_state.clone(),
             false,
         );
+
+        let transactions_synchronizer = TransactionsSynchronizer::start(
+            network_client,
+            context.clone(),
+            core_dispatcher.clone(),
+            dag_state.clone(),
+        );
         let authority_service = Arc::new(AuthorityService::new(
             context.clone(),
             block_verifier,
             commit_vote_monitor,
             synchronizer,
+            transactions_synchronizer,
             core_dispatcher.clone(),
             rx_block_broadcast,
             dag_state,
@@ -893,7 +963,7 @@ mod tests {
         let store = Arc::new(MemStore::new());
         let dag_state = Arc::new(RwLock::new(DagState::new(context.clone(), store.clone())));
         let synchronizer = Synchronizer::start(
-            network_client,
+            network_client.clone(),
             context.clone(),
             core_dispatcher.clone(),
             commit_vote_monitor.clone(),
@@ -901,11 +971,19 @@ mod tests {
             dag_state.clone(),
             true,
         );
+
+        let transactions_synchronizer = TransactionsSynchronizer::start(
+            network_client,
+            context.clone(),
+            core_dispatcher.clone(),
+            dag_state.clone(),
+        );
         let authority_service = Arc::new(AuthorityService::new(
             context.clone(),
             block_verifier,
             commit_vote_monitor,
             synchronizer,
+            transactions_synchronizer,
             core_dispatcher.clone(),
             rx_block_broadcast,
             dag_state.clone(),
