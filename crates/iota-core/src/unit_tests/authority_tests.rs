@@ -66,6 +66,7 @@ use crate::{
     },
     authority_client::{AuthorityAPI, NetworkAuthorityClient},
     authority_server::AuthorityServer,
+    execution_cache::ExecutionCacheConfigType,
     test_utils::init_state_parameters_from_rng,
     transaction_input_loader::TransactionInputLoader,
 };
@@ -2913,6 +2914,7 @@ async fn test_account_state_unknown_account() {
 #[tokio::test]
 async fn test_authority_different_version() {
     telemetry_subscribers::init_for_testing();
+    use iota_config::{ExecutionCacheConfig, ExecutionCacheConfig::PassthroughCache};
 
     async fn init_state(
         genesis: &Genesis,
@@ -2921,6 +2923,7 @@ async fn test_authority_different_version() {
     ) -> Arc<AuthorityState> {
         TestAuthorityBuilder::new()
             .with_genesis_and_keypair(genesis, &authority_key)
+            .with_cache_config(ExecutionCacheConfig::PassthroughCache)
             .with_store(store)
             .build()
             .await
@@ -2944,6 +2947,7 @@ async fn test_authority_different_version() {
     // disable indexer to prevent the node from indexing
     let authority = TestAuthorityBuilder::new()
         .with_genesis_and_keypair(&genesis, &authority_key)
+        .with_cache_config(ExecutionCacheConfig::PassthroughCache)
         .with_store(store)
         .disable_indexer()
         .build()
