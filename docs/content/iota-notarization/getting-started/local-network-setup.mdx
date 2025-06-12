@@ -85,7 +85,7 @@ Next, publish the Notarization package to your local test network:
 
 The last line of the output will be the id of the package that was just published. You'll need this ID when creating an instance of `NotarizationClient` and `NotarizationClientReadOnly` for a custom network, like the local network.
 
-The  [create a locked notarization example](../how-tos/create-locked.mdx), as well as the following examples, fetch this value from the environment variable `IOTA_NOTARIZATION_PKG_ID`, so in order to run them, set this variable, e.g. for package id `0x20f640b0dc01c50c04a84443d4320d7a77a15ed94f9bc19ebb6d0a5805045ddc` with:
+The  [create a locked notarization example](../how-tos/dynamic-notarizations/create.mdx), as well as the following examples, fetch this value from the environment variable `IOTA_NOTARIZATION_PKG_ID`, so in order to run them, set this variable, e.g. for package id `0x20f640b0dc01c50c04a84443d4320d7a77a15ed94f9bc19ebb6d0a5805045ddc` with:
 
 ```bash
 export IOTA_NOTARIZATION_PKG_ID=0x20f640b0dc01c50c04a84443d4320d7a77a15ed94f9bc19ebb6d0a5805045ddc

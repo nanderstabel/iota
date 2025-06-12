@@ -12,13 +12,13 @@ tags:
 
 IOTA Notarization enables the creation of immutable, on-chain records for any arbitrary data. This is achieved by storing the data, or a hash of it, inside a dedicated Move object on the IOTA ledger. This process provides a verifiable, timestamped proof of the data's existence and integrity at a specific point in time.
 
-The Notarization suite is composed of two primary components:
+IOTA Notarization is composed of two primary components:
 -   **Notarization Move Package**: The on-chain smart contracts that define the behavior and structure of notarization objects.
 -   **Notarization Library (Rust/Wasm)**: A client-side library that provides developers with convenient functions to create, manage, and verify `Notarization` objects on the network.
 
 ## The `Notarization` Object
 
-The core of the suite is the `Notarization` object, a unified Move `struct` that holds the notarized data and its associated metadata. It is a `key` object, meaning it is owned by an address.
+The core of the suite is the `Notarization` object, a unified Move `struct` that holds the notarized data and its associated metadata. The Notarization Object is owned by an address.
 
 The `Notarization` object is designed to be flexible and supports two distinct methods, `Locked` and `Dynamic`, which are determined by the `method` field upon creation.
 
