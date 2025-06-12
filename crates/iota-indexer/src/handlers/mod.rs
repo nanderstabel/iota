@@ -121,7 +121,7 @@ impl<T> CommonHandler<T> {
                 }
             }
 
-            if !tuple_batch.is_empty() && checkpoint_lag_limiter != 0 {
+            if !tuple_batch.is_empty() {
                 let tuple_batch = std::mem::take(&mut tuple_batch);
                 let (last_checkpoint_seq, _data) = tuple_batch.last().unwrap();
                 let last_checkpoint_seq = last_checkpoint_seq.to_owned();
