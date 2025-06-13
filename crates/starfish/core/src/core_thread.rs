@@ -36,14 +36,20 @@ const CORE_THREAD_COMMANDS_CHANNEL_SIZE: usize = 2000;
 
 enum CoreThreadCommand {
     /// Add blocks to be processed and accepted
-    AddBlocks(Vec<VerifiedBlock>, oneshot::Sender<BTreeSet<BlockRef>>),
+    AddBlocks(
+        Vec<VerifiedBlock>,
+        oneshot::Sender<(BTreeSet<BlockRef>, BTreeSet<BlockRef>)>,
+    ),
     /// Add block headers to be processed and accepted
     AddBlockHeaders(
         Vec<VerifiedBlockHeader>,
-        oneshot::Sender<BTreeSet<BlockRef>>,
+        oneshot::Sender<(BTreeSet<BlockRef>, BTreeSet<BlockRef>)>,
     ),
     /// Add committed sub dag blocks for processing and acceptance.
-    AddCertifiedCommits(CertifiedCommits, oneshot::Sender<BTreeSet<BlockRef>>),
+    AddCertifiedCommits(
+        CertifiedCommits,
+        oneshot::Sender<(BTreeSet<BlockRef>, BTreeSet<BlockRef>)>,
+    ),
     /// Called when the min round has passed or the leader timeout occurred and
     /// a block should be produced. When the command is called with `force =
     /// true`, then the block will be created for `round` skipping
@@ -68,27 +74,29 @@ pub enum CoreError {
 /// Also this allows the easier mocking during unit tests.
 #[async_trait]
 pub trait CoreThreadDispatcher: Sync + Send + 'static {
-    async fn add_blocks(&self, blocks: Vec<VerifiedBlock>)
-    -> Result<BTreeSet<BlockRef>, CoreError>;
+    async fn add_blocks(
+        &self,
+        blocks: Vec<VerifiedBlock>,
+    ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError>;
 
     async fn add_block_headers(
         &self,
         blocks: Vec<VerifiedBlockHeader>,
-    ) -> Result<BTreeSet<BlockRef>, CoreError>;
+    ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError>;
 
     async fn add_transactions(
         &self,
         transactions: Vec<VerifiedTransactions>,
-    ) -> ConsensusResult<()>;
+    ) -> Result<(), CoreError>;
 
-    async fn get_missing_transaction_data(&self) -> ConsensusResult<BTreeSet<BlockRef>>;
+    async fn get_missing_transaction_data(&self) -> Result<BTreeSet<BlockRef>, CoreError>;
 
     async fn add_certified_commits(
         &self,
         commits: CertifiedCommits,
-    ) -> Result<BTreeSet<BlockRef>, CoreError>;
+    ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError>;
 
-    async fn new_block(&self, round: Round, force: bool) -> Result<(), CoreError>;
+    async fn new_block(&self, round: Round, force: bool) -> Result<BTreeSet<BlockRef>, CoreError>;
 
     async fn get_missing_blocks(&self) -> Result<BTreeSet<BlockRef>, CoreError>;
 
@@ -154,8 +162,8 @@ impl CoreThread {
                         }
                         CoreThreadCommand::NewBlock(round, sender, force) => {
                             let _scope = monitored_scope("CoreThread::loop::new_block");
-                            self.core.new_block(round, force)?;
-                            sender.send(()).ok();
+                            let (_new_block_opt, missing_committed_txns) = self.core.new_block(round, force)?;
+                            sender.send(missing_committed_txns).ok();
                         }
                         CoreThreadCommand::GetMissing(sender) => {
                             let _scope = monitored_scope("CoreThread::loop::get_missing");
@@ -168,7 +176,7 @@ impl CoreThread {
                         }
                         CoreThreadCommand::GetMissingTransactionData(sender) => {
                             let _scope = monitored_scope("CoreThread::loop::get_missing_transaction_data");
-                            sender.send(Ok(self.core.get_missing_transaction_data())).ok();
+                            sender.send(self.core.get_missing_transaction_data()).ok();
                         }
                     }
                 }
@@ -286,28 +294,24 @@ impl CoreThreadDispatcher for ChannelCoreThreadDispatcher {
     async fn add_blocks(
         &self,
         blocks: Vec<VerifiedBlock>,
-    ) -> Result<BTreeSet<BlockRef>, CoreError> {
+    ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
         for block in &blocks {
             self.highest_received_rounds[block.author()].fetch_max(block.round(), Ordering::AcqRel);
         }
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::AddBlocks(blocks, sender))
             .await;
-        let missing_block_refs = receiver.await.map_err(|e| Shutdown(e.to_string()))?;
-
-        Ok(missing_block_refs)
+        Ok(receiver.await.map_err(|e| Shutdown(e.to_string()))?)
     }
 
     async fn add_block_headers(
         &self,
         block_headers: Vec<VerifiedBlockHeader>,
-    ) -> Result<BTreeSet<BlockRef>, CoreError> {
+    ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::AddBlockHeaders(block_headers, sender))
             .await;
-        let missing_block_refs = receiver.await.map_err(|e| Shutdown(e.to_string()))?;
-
-        Ok(missing_block_refs)
+        Ok(receiver.await.map_err(|e| Shutdown(e.to_string()))?)
     }
 
     async fn add_transactions(
@@ -330,7 +334,7 @@ impl CoreThreadDispatcher for ChannelCoreThreadDispatcher {
     async fn add_certified_commits(
         &self,
         commits: CertifiedCommits,
-    ) -> Result<BTreeSet<BlockRef>, CoreError> {
+    ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
         for commit in commits.commits() {
             for block in commit.blocks() {
                 self.highest_received_rounds[block.author()]
@@ -340,11 +344,10 @@ impl CoreThreadDispatcher for ChannelCoreThreadDispatcher {
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::AddCertifiedCommits(commits, sender))
             .await;
-        let missing_block_refs = receiver.await.map_err(|e| Shutdown(e.to_string()))?;
-        Ok(missing_block_refs)
+        Ok(receiver.await.map_err(|e| Shutdown(e.to_string()))?)
     }
 
-    async fn new_block(&self, round: Round, force: bool) -> Result<(), CoreError> {
+    async fn new_block(&self, round: Round, force: bool) -> Result<BTreeSet<BlockRef>, CoreError> {
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::NewBlock(round, sender, force))
             .await;
@@ -449,19 +452,19 @@ pub(crate) mod tests {
         async fn add_blocks(
             &self,
             blocks: Vec<VerifiedBlock>,
-        ) -> Result<BTreeSet<BlockRef>, CoreError> {
+        ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
             let block_refs = blocks.iter().map(|b| b.reference()).collect();
             self.blocks.lock().extend(blocks);
-            Ok(block_refs)
+            Ok((block_refs, BTreeSet::new()))
         }
 
         async fn add_block_headers(
             &self,
             block_headers: Vec<VerifiedBlockHeader>,
-        ) -> Result<BTreeSet<BlockRef>, CoreError> {
+        ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
             let block_refs = block_headers.iter().map(|b| b.reference()).collect();
             self.block_headers.lock().extend(block_headers);
-            Ok(block_refs)
+            Ok((block_refs, BTreeSet::new()))
         }
 
         async fn add_transactions(
@@ -478,15 +481,20 @@ pub(crate) mod tests {
         async fn add_certified_commits(
             &self,
             _commits: CertifiedCommits,
-        ) -> Result<BTreeSet<BlockRef>, CoreError> {
+        ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
             todo!()
         }
 
-        async fn new_block(&self, round: Round, force: bool) -> Result<(), CoreError> {
+        async fn new_block(
+            &self,
+            round: Round,
+            force: bool,
+        ) -> Result<BTreeSet<BlockRef>, CoreError> {
             self.new_block_calls
                 .lock()
+                .unwrap()
                 .push((round, force, Instant::now()));
-            Ok(())
+            Ok(BTreeSet::new())
         }
 
         async fn get_missing_blocks(&self) -> Result<BTreeSet<BlockRef>, CoreError> {
@@ -501,8 +509,7 @@ pub(crate) mod tests {
         }
 
         fn set_last_known_proposed_round(&self, round: Round) -> Result<(), CoreError> {
-            let mut last_known_proposed_round = self.last_known_proposed_round.lock();
-            last_known_proposed_round.push(round);
+            self.last_known_proposed_round.lock().unwrap().push(round);
             Ok(())
         }
 
