@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-
+use consensus_config::AuthorityIndex;
 use iota_metrics::monitored_scope;
 use itertools::Itertools as _;
 use parking_lot::RwLock;
@@ -721,6 +721,31 @@ impl BlockManager {
             .set(max_round.into());
     }
 
+    /// Returns how many suspended blocks list `missing` as one of their
+    /// missing ancestors.
+    pub fn dependent_count(&self, missing: &BlockRef) -> usize {
+        self.missing_ancestors
+            .get(missing)
+            .map(|children| children.len())
+            .unwrap_or(0)
+    }
+
+    /// Returns the list of authority indices that authored suspended blocks
+    /// which list `missing` as one of their missing ancestors.
+    pub fn dependents_of(&self, missing: &BlockRef) -> Vec<AuthorityIndex> {
+        self.missing_ancestors
+            .get(missing)
+            .map(|children| {
+                children.iter()
+                    .filter_map(|child_ref| self.suspended_blocks.get(child_ref))
+                    .map(|sb| sb.block.author() )
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+
+
     /// Checks if block manager is empty.
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
@@ -754,7 +779,8 @@ enum TryAcceptResult {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, sync::Arc};
+    use crate::TestBlock;
+use std::{collections::BTreeSet, sync::Arc};
 
     use consensus_config::AuthorityIndex;
     use parking_lot::RwLock;
@@ -774,6 +800,7 @@ mod tests {
         test_dag_builder::DagBuilder,
         test_dag_parser::parse_dag,
     };
+    use crate::block_manager::SuspendedBlock;
 
     #[tokio::test]
     async fn suspend_blocks_with_missing_ancestors() {
@@ -1442,5 +1469,45 @@ mod tests {
                 .chain(missing_block_refs_from_find.into_iter())
                 .collect()
         );
+    }
+    #[tokio::test]
+    async fn test_dependent_count_and_dependents_of_simple() {
+        // 1. Setup
+        let (context, _keys) = Context::new_for_test(4);
+        let context = Arc::new(context);
+        let store = Arc::new(MemStore::new());
+        let dag_state = Arc::new(RwLock::new(DagState::new(context.clone(), store)));
+        let mut block_manager = BlockManager::new(
+            context.clone(),
+            dag_state.clone(),
+            Arc::new(NoopBlockVerifier),
+        );
+        // 2. Define a “missing” block
+        let missing = BlockRef::new(1, AuthorityIndex::new_for_test(0), BlockDigest::MIN);
+
+        // 3. Empty‐case assertions
+        assert_eq!(block_manager.dependent_count(&missing), 0);
+        assert!(block_manager.dependents_of(&missing).is_empty());
+
+        // 4. Create & suspend one child block (author = 3)
+        let child_block = VerifiedBlock::new_for_test(
+            TestBlock::new(2, 3).build()
+        );
+        let child_ref = child_block.reference();
+        // Link child → missing
+        block_manager
+            .missing_ancestors
+            .entry(missing)
+            .or_default()
+            .insert(child_ref);
+        // Actually park the child as “suspended”
+        block_manager
+            .suspended_blocks
+            .insert(child_ref, SuspendedBlock::new(child_block.clone(), BTreeSet::new()));
+
+        // 5. One‐child assertions
+        assert_eq!(block_manager.dependent_count(&missing), 1);
+        let deps = block_manager.dependents_of(&missing);
+        assert_eq!(deps, vec![AuthorityIndex::new_for_test(3)]);
     }
 }
