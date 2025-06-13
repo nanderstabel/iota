@@ -1043,10 +1043,20 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                 .iter()
                 .filter(|&missing| bm.dependent_count(missing) > HOT_DEPENDENT_THRESHOLD)
                 .for_each(|missing| {
+                    // Always bind authors as mutable to allow shuffling in non-test environments.
+                    // In test builds, the `mut` is unused, so we silence Clippy.
+                    #[allow(unused_mut)]
                     let mut authors = bm.dependents_of(missing);
+
                     #[cfg(not(test))]
                     authors.shuffle(&mut ThreadRng::default());
+
                     if let Some(peer) = authors.first().copied() {
+                        // BlockRef is Copy, so Clippy suggests using `*missing` instead of `.clone()`.
+                        // However, using `*missing` here breaks type inference in this context,
+                        // while `.clone()` is clear, safe, and equivalent.
+                        // We explicitly allow Clippy's warning for clarity and correctness.
+                        #[allow(clippy::clone_on_copy)]
                         let block_set = std::iter::once(missing.clone()).collect::<BTreeSet<_>>();
                         if let Some(guard) = inflight_blocks.lock_blocks(block_set, peer) {
                             info!(
