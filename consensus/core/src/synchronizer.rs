@@ -34,12 +34,12 @@ use crate::{
     BlockAPI, CommitIndex, Round,
     authority_service::COMMIT_LAG_MULTIPLIER,
     block::{BlockRef, SignedBlock, VerifiedBlock},
+    block_manager::BlockManager,
     block_verifier::BlockVerifier,
     commit_vote_monitor::CommitVoteMonitor,
     context::Context,
     core_thread::CoreThreadDispatcher,
     dag_state::DagState,
-    block_manager::BlockManager,
     error::{ConsensusError, ConsensusResult},
     network::NetworkClient,
 };
@@ -1028,7 +1028,6 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         dag_state: Arc<RwLock<DagState>>,
         block_manager: Arc<RwLock<BlockManager>>,
     ) -> Vec<(BlocksGuard, Vec<Bytes>, AuthorityIndex)> {
-
         let mut request_futures = FuturesUnordered::new();
 
         let highest_rounds = Self::get_highest_accepted_rounds(dag_state, &context);
@@ -1038,7 +1037,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         const HOT_DEPENDENT_THRESHOLD: usize = 50;
         {
             // Acquire the lock on the BlockManager
-            let bm =  block_manager.read();
+            let bm = block_manager.read();
 
             missing_blocks
                 .iter()
@@ -1066,7 +1065,6 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                     }
                 });
         }
-
 
         // Proceed with the usual fetching
         const MAX_PEERS: usize = 3;
@@ -1111,7 +1109,6 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         peers.shuffle(&mut ThreadRng::default());
 
         let mut peers = peers.into_iter();
-
 
         // Send the initial requests
         for blocks in missing_blocks.chunks(MAX_BLOCKS_PER_FETCH) {

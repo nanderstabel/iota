@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+
 use consensus_config::AuthorityIndex;
 use iota_metrics::monitored_scope;
 use itertools::Itertools as _;
@@ -736,15 +737,14 @@ impl BlockManager {
         self.missing_ancestors
             .get(missing)
             .map(|children| {
-                children.iter()
+                children
+                    .iter()
                     .filter_map(|child_ref| self.suspended_blocks.get(child_ref))
-                    .map(|sb| sb.block.author() )
+                    .map(|sb| sb.block.author())
                     .collect()
             })
             .unwrap_or_default()
     }
-
-
 
     /// Checks if block manager is empty.
     #[cfg(test)]
@@ -779,8 +779,7 @@ enum TryAcceptResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::TestBlock;
-use std::{collections::BTreeSet, sync::Arc};
+    use std::{collections::BTreeSet, sync::Arc};
 
     use consensus_config::AuthorityIndex;
     use parking_lot::RwLock;
@@ -788,9 +787,9 @@ use std::{collections::BTreeSet, sync::Arc};
     use rstest::rstest;
 
     use crate::{
-        CommitDigest, Round,
+        CommitDigest, Round, TestBlock,
         block::{BlockAPI, BlockDigest, BlockRef, SignedBlock, VerifiedBlock},
-        block_manager::BlockManager,
+        block_manager::{BlockManager, SuspendedBlock},
         block_verifier::{BlockVerifier, NoopBlockVerifier},
         commit::TrustedCommit,
         context::Context,
@@ -800,7 +799,6 @@ use std::{collections::BTreeSet, sync::Arc};
         test_dag_builder::DagBuilder,
         test_dag_parser::parse_dag,
     };
-    use crate::block_manager::SuspendedBlock;
 
     #[tokio::test]
     async fn suspend_blocks_with_missing_ancestors() {
@@ -1490,9 +1488,7 @@ use std::{collections::BTreeSet, sync::Arc};
         assert!(block_manager.dependents_of(&missing).is_empty());
 
         // 4. Create & suspend one child block (author = 3)
-        let child_block = VerifiedBlock::new_for_test(
-            TestBlock::new(2, 3).build()
-        );
+        let child_block = VerifiedBlock::new_for_test(TestBlock::new(2, 3).build());
         let child_ref = child_block.reference();
         // Link child → missing
         block_manager
@@ -1501,9 +1497,10 @@ use std::{collections::BTreeSet, sync::Arc};
             .or_default()
             .insert(child_ref);
         // Actually park the child as “suspended”
-        block_manager
-            .suspended_blocks
-            .insert(child_ref, SuspendedBlock::new(child_block.clone(), BTreeSet::new()));
+        block_manager.suspended_blocks.insert(
+            child_ref,
+            SuspendedBlock::new(child_block.clone(), BTreeSet::new()),
+        );
 
         // 5. One‐child assertions
         assert_eq!(block_manager.dependent_count(&missing), 1);
