@@ -39,6 +39,7 @@ use crate::{
     context::Context,
     core_thread::CoreThreadDispatcher,
     dag_state::DagState,
+    block_manager::BlockManager,
     error::{ConsensusError, ConsensusResult},
     network::NetworkClient,
 };
@@ -262,6 +263,7 @@ pub(crate) struct Synchronizer<C: NetworkClient, V: BlockVerifier, D: CoreThread
     block_verifier: Arc<V>,
     inflight_blocks_map: Arc<InflightBlocksMap>,
     commands_sender: Sender<Command>,
+    block_manager: Arc<RwLock<BlockManager>>,
 }
 
 impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C, V, D> {
@@ -279,6 +281,13 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         let (commands_sender, commands_receiver) =
             channel("consensus_synchronizer_commands", 1_000);
         let inflight_blocks_map = InflightBlocksMap::new();
+
+        // Prepare the BlockManager for the synchronizer
+        let block_manager = Arc::new(RwLock::new(BlockManager::new(
+            context.clone(),
+            dag_state.clone(),
+            block_verifier.clone(),
+        )));
 
         // Spawn the tasks to fetch the blocks from the others
         let mut fetch_block_senders = BTreeMap::new();
@@ -327,6 +336,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                 inflight_blocks_map,
                 commands_sender: commands_sender_clone,
                 dag_state,
+                block_manager,
             };
             s.run().await;
         }));
@@ -888,6 +898,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         let blocks_to_fetch = self.inflight_blocks_map.clone();
         let commands_sender = self.commands_sender.clone();
         let dag_state = self.dag_state.clone();
+        let block_manager = self.block_manager.clone();
 
         let (commit_lagging, last_commit_index, quorum_commit_index) = self.is_commit_lagging();
         if commit_lagging {
@@ -946,6 +957,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                     network_client,
                     missing_blocks,
                     dag_state,
+                    block_manager.clone(),
                 )
                 .await;
                 context
@@ -1014,7 +1026,49 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         network_client: Arc<C>,
         missing_blocks: BTreeSet<BlockRef>,
         dag_state: Arc<RwLock<DagState>>,
+        block_manager: Arc<RwLock<BlockManager>>,
     ) -> Vec<(BlocksGuard, Vec<Bytes>, AuthorityIndex)> {
+
+        let mut request_futures = FuturesUnordered::new();
+
+        let highest_rounds = Self::get_highest_accepted_rounds(dag_state, &context);
+
+        // For any missing block with > HOT_DEPENDENT_THRESHOLD dependents,
+        // we proactively fetch it from one random dependent-author peer.
+        const HOT_DEPENDENT_THRESHOLD: usize = 50;
+        {
+            // Acquire the lock on the BlockManager
+            let bm =  block_manager.read();
+
+            missing_blocks
+                .iter()
+                .filter(|&missing| bm.dependent_count(missing) > HOT_DEPENDENT_THRESHOLD)
+                .for_each(|missing| {
+                    let mut authors = bm.dependents_of(missing);
+                    #[cfg(not(test))]
+                    authors.shuffle(&mut ThreadRng::default());
+                    if let Some(peer) = authors.first().copied() {
+                        let block_set = std::iter::once(missing.clone()).collect::<BTreeSet<_>>();
+                        if let Some(guard) = inflight_blocks.lock_blocks(block_set, peer) {
+                            info!(
+                                "Hot fetch of missing block {} from dependent-author peer {}",
+                                missing, peer
+                            );
+                            request_futures.push(Self::fetch_blocks_request(
+                                network_client.clone(),
+                                peer,
+                                guard,
+                                highest_rounds.clone(),
+                                FETCH_REQUEST_TIMEOUT,
+                                1,
+                            ));
+                        }
+                    }
+                });
+        }
+
+
+        // Proceed with the usual fetching
         const MAX_PEERS: usize = 3;
 
         // Attempt to fetch only up to a max of blocks
@@ -1057,9 +1111,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         peers.shuffle(&mut ThreadRng::default());
 
         let mut peers = peers.into_iter();
-        let mut request_futures = FuturesUnordered::new();
 
-        let highest_rounds = Self::get_highest_accepted_rounds(dag_state, &context);
 
         // Send the initial requests
         for blocks in missing_blocks.chunks(MAX_BLOCKS_PER_FETCH) {
