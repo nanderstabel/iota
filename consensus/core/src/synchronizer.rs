@@ -1052,10 +1052,11 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                     authors.shuffle(&mut ThreadRng::default());
 
                     if let Some(peer) = authors.first().copied() {
-                        // BlockRef is Copy, so Clippy suggests using `*missing` instead of `.clone()`.
-                        // However, using `*missing` here breaks type inference in this context,
-                        // while `.clone()` is clear, safe, and equivalent.
-                        // We explicitly allow Clippy's warning for clarity and correctness.
+                        // BlockRef is Copy, so Clippy suggests using `*missing` instead of
+                        // `.clone()`. However, using `*missing` here breaks
+                        // type inference in this context, while `.clone()`
+                        // is clear, safe, and equivalent. We explicitly
+                        // allow Clippy's warning for clarity and correctness.
                         #[allow(clippy::clone_on_copy)]
                         let block_set = std::iter::once(missing.clone()).collect::<BTreeSet<_>>();
                         if let Some(guard) = inflight_blocks.lock_blocks(block_set, peer) {
