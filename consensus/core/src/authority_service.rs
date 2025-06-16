@@ -72,6 +72,16 @@ impl<C: CoreThreadDispatcher> AuthorityService<C> {
             store,
         }
     }
+    fn is_equivocating(&self, block_ref: BlockRef) -> bool {
+        let read_dag_state = self.dag_state.read();
+        let vef_blocks_from_author = read_dag_state.get_cached_blocks(block_ref.author,GENESIS_ROUND);
+        for block in vef_blocks_from_author.iter() {
+            if block_ref.round == block.reference().round && block_ref!=block.reference() {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 #[async_trait]
@@ -90,8 +100,17 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         let signed_block: SignedBlock = match bcs::from_bytes(&serialized_block.block) {
             Ok(block) => block,
             error => {
-                let scoring_metrics = &self.context.scoring_metrics;
-                scoring_metrics.update_syntactically_invalid_blocks(peer, 1);
+                // Update prometheus metric
+                self.context
+                    .metrics
+                    .node_metrics
+                    .syntactically_invalid_blocks
+                    .with_label_values(&[peer_hostname.clone(), "handle_send_block".to_string(), "MalformedBlock".to_string()])
+                    .inc();
+                // Update validator score
+                self.context
+                    .scoring_metrics
+                    .update_syntactically_invalid_blocks(peer, 1);
                 error.map_err(ConsensusError::MalformedBlock)?
             }
         };
@@ -223,6 +242,10 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             .verified_blocks
             .with_label_values(&[peer_hostname])
             .inc();
+        // Update validator score
+        self.context
+            .scoring_metrics
+            .update_verified_blocks_this_epoch(block_ref.author,1);
 
         let missing_ancestors = self
             .core_dispatcher
@@ -308,6 +331,26 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
                 }
             });
         }
+        //Equivocation check and update
+        if self.is_equivocating(block_ref) {
+            let last_round = self.context
+                .scoring_metrics
+                .get_last_equivocating_round(block_ref.author);
+            if u64::from(block_ref.round) > last_round {
+                self.context
+                    .scoring_metrics
+                    .update_last_equivocating_round(block_ref.author,block_ref.round);
+                self.context
+                    .metrics
+                    .node_metrics
+                    .equivocating_rounds_by_authority
+                    .with_label_values(&[peer_hostname])
+                    .inc();
+                self.context
+                    .scoring_metrics
+                    .update_equivocating_rounds(block_ref.author,1);
+            }
+        }
 
         Ok(())
     }
@@ -380,6 +423,31 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             if block.round == GENESIS_ROUND {
                 return Err(ConsensusError::UnexpectedGenesisBlockRequested);
             }
+        }
+
+        //Equivocation check and update
+        for block_ref in block_refs.clone() {
+            if self.is_equivocating(block_ref) {
+                let peer_hostname = &self.context.committee.authority(block_ref.author).hostname;
+                let last_round = self.context
+                    .scoring_metrics
+                    .get_last_equivocating_round(block_ref.author);
+                if u64::from(block_ref.round) > last_round {
+                    self.context
+                        .scoring_metrics
+                        .update_last_equivocating_round(block_ref.author,block_ref.round);
+                    self.context
+                        .metrics
+                        .node_metrics
+                        .equivocating_rounds_by_authority
+                        .with_label_values(&[peer_hostname])
+                        .inc();
+                    self.context
+                        .scoring_metrics
+                        .update_equivocating_rounds(block_ref.author,1);
+                }
+            }
+
         }
 
         // For now ask dag state directly
