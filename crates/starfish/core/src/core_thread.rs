@@ -153,7 +153,7 @@ impl CoreThread {
                         CoreThreadCommand::AddBlockHeaders(block_headers, sender) => {
                             let _scope = monitored_scope("CoreThread::loop::add_block_headers");
                             let (missing_block_refs, missing_committed_txns) = self.core.add_block_headers(block_headers)?;
-                            sender.send((missing_block_refs,missing_committed_txns)).ok();
+                            sender.send((missing_block_refs, missing_committed_txns)).ok();
                         }
                         CoreThreadCommand::AddCertifiedCommits(commits, sender) => {
                             let _scope = monitored_scope("CoreThread::loop::add_certified_commits");
@@ -470,11 +470,11 @@ pub(crate) mod tests {
         async fn add_transactions(
             &self,
             _transactions: Vec<VerifiedTransactions>,
-        ) -> ConsensusResult<()> {
+        ) -> Result<(), CoreError> {
             unimplemented!()
         }
 
-        async fn get_missing_transaction_data(&self) -> ConsensusResult<BTreeSet<BlockRef>> {
+        async fn get_missing_transaction_data(&self) -> Result<BTreeSet<BlockRef>, CoreError> {
             unimplemented!()
         }
 
@@ -482,7 +482,7 @@ pub(crate) mod tests {
             &self,
             _commits: CertifiedCommits,
         ) -> Result<(BTreeSet<BlockRef>, BTreeSet<BlockRef>), CoreError> {
-            todo!()
+            unimplemented!()
         }
 
         async fn new_block(
@@ -492,7 +492,6 @@ pub(crate) mod tests {
         ) -> Result<BTreeSet<BlockRef>, CoreError> {
             self.new_block_calls
                 .lock()
-                .unwrap()
                 .push((round, force, Instant::now()));
             Ok(BTreeSet::new())
         }
@@ -505,16 +504,16 @@ pub(crate) mod tests {
         }
 
         fn set_subscriber_exists(&self, _exists: bool) -> Result<(), CoreError> {
-            todo!()
+            unimplemented!()
         }
 
         fn set_last_known_proposed_round(&self, round: Round) -> Result<(), CoreError> {
-            self.last_known_proposed_round.lock().unwrap().push(round);
+            self.last_known_proposed_round.lock().push(round);
             Ok(())
         }
 
         fn highest_received_rounds(&self) -> Vec<Round> {
-            todo!()
+            unimplemented!()
         }
     }
 
