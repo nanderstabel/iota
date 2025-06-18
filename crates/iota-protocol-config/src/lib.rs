@@ -1977,11 +1977,6 @@ impl ProtocolConfig {
                         // to be included before be considered garbage collected.
                         cfg.consensus_gc_depth = Some(60);
                     }
-                    // Enable min_free_execution_slot for the shared object congestion tracker in
-                    // devnet.
-                    if chain != Chain::Testnet && chain != Chain::Mainnet {
-                        cfg.feature_flags.congestion_control_min_free_execution_slot = true;
-                    }
                 }
                 // Use this template when making changes:
                 //
