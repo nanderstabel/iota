@@ -31,7 +31,7 @@ impl Default for IotaNamesConfig {
     fn default() -> Self {
         // TODO change to mainnet https://github.com/iotaledger/iota/issues/6532
         // TODO change to testnet https://github.com/iotaledger/iota/issues/6531
-        Self::devnet()
+        Self::testnet()
     }
 }
 
@@ -65,7 +65,7 @@ impl IotaNamesConfig {
     pub fn from_chain(chain: &Chain) -> Self {
         match chain {
             Chain::Mainnet => todo!("https://github.com/iotaledger/iota/issues/6532"),
-            Chain::Testnet => todo!("https://github.com/iotaledger/iota/issues/6531"),
+            Chain::Testnet => IotaNamesConfig::testnet(),
             Chain::Unknown => IotaNamesConfig::devnet(),
         }
     }
@@ -107,6 +107,33 @@ impl IotaNamesConfig {
             "0xef24c78e8c085e29760d37b287fc16647f0f578e8d22f18dd65f655285afad3e";
         const REVERSE_REGISTRY_ID: &str =
             "0x566dc13eafceaf8c3487ee2c41464553839ef4d50937c63741e359c98080c7b6";
+
+        let package_address = IotaAddress::from_str(PACKAGE_ADDRESS).unwrap();
+        let object_id = ObjectID::from_str(OBJECT_ID).unwrap();
+        let payments_package_address = IotaAddress::from_str(PAYMENTS_PACKAGE_ADDRESS).unwrap();
+        let registry_id = ObjectID::from_str(REGISTRY_ID).unwrap();
+        let reverse_registry_id = ObjectID::from_str(REVERSE_REGISTRY_ID).unwrap();
+
+        Self::new(
+            package_address,
+            object_id,
+            payments_package_address,
+            registry_id,
+            reverse_registry_id,
+        )
+    }
+
+    pub fn testnet() -> Self {
+        const PACKAGE_ADDRESS: &str =
+            "0x40932293b0a1521e8dbce8cbb59e8b670fd164e5af3a695083fd92bc8cdc70e6";
+        const OBJECT_ID: &str =
+            "0xd29e6d2534ef6d96ce1eff25273882ab2b859e5a4f24d1824ea8e5b61ea80407";
+        const PAYMENTS_PACKAGE_ADDRESS: &str =
+            "0xceb235adc8a762fb3fd908c313975f560f4bcc0a612037607836b1d0595c4872";
+        const REGISTRY_ID: &str =
+            "0xe70b87ec1ac33f9f9d22a10284d36a2b4769470e54fb2900a4caef669f0c6c82";
+        const REVERSE_REGISTRY_ID: &str =
+            "0x3b86fd456e008fed61964f737e24cbd58f720e930dd01e1152d0b8ff6a5ee225";
 
         let package_address = IotaAddress::from_str(PACKAGE_ADDRESS).unwrap();
         let object_id = ObjectID::from_str(OBJECT_ID).unwrap();
