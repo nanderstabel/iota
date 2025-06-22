@@ -909,7 +909,7 @@ pub(crate) struct ValidatorScoreMetrics {
     pub(crate) last_seen_epoch: Arc<AtomicU64>,
     // Registers the last round where an equivocation was found for each authority. Used to avoid
     // counting multiple times equivocation ocurrences.
-    pub(crate) last_equivocating_round: Arc<Vec<AtomicU64>>,
+    pub(crate) last_equivocating_rounds: HashMap<AuthorityIndex,VecDeque<Round>>,
 }
 
 
@@ -928,8 +928,7 @@ impl Default for ValidatorScoreMetrics {
         // Auxiliary values
         let mut verified_blocks_this_epoch_inner = vec![];
         verified_blocks_this_epoch_inner.resize_with(50, || AtomicU64::new(0));
-        let mut last_equivocating_round_inner = vec![];
-        last_equivocating_round_inner.resize_with(50, || AtomicU64::new(0));
+        let mut last_equivocating_rounds_inner = HashMap::new();
         Self {
             semantically_invalid_blocks: Arc::new(semantically_invalid_blocks_inner),
             syntactically_invalid_blocks: Arc::new(syntactically_invalid_blocks_inner),
@@ -938,7 +937,7 @@ impl Default for ValidatorScoreMetrics {
             verified_blocks_this_epoch: Arc::new(verified_blocks_this_epoch_inner),
             first_round_this_epoch: Arc::new(AtomicU64::new(0)),
             last_seen_epoch: Arc::new(AtomicU64::new(0)),
-            last_equivocating_round: Arc::new(last_equivocating_round_inner)
+            last_equivocating_round: last_equivocating_round_inner
         }
     }
 }
@@ -1005,13 +1004,17 @@ impl ValidatorScoreMetrics {
         self.first_round_this_epoch.store(epoch, Ordering::Relaxed);
     }
 
-    pub(crate) fn update_last_equivocating_round(
-        &self,
+    pub(crate) fn update_last_equivocating_rounds(
+        &mut self,
         validator: AuthorityIndex,
         round: u32,
     ) {
-        self.last_equivocating_round[validator.value()]
-            .store(u64::from(round), Ordering::Relaxed);
+        if let Some(rounds) = self.last_equivocating_rounds.get_mut(&validator) {
+            if rounds.len() >= 100 {
+                rounds.pop_front();
+            }
+            rounds.push_back(round);
+        }
     }
 
     pub(crate) fn get_semantically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
@@ -1040,8 +1043,17 @@ impl ValidatorScoreMetrics {
             element.store(0, Ordering::Relaxed);
         }
     }
-    pub(crate) fn get_last_equivocating_round(&self, validator: AuthorityIndex) -> u64 {
-        self.last_equivocating_round[validator.value()].load(Ordering::Relaxed)
+    pub(crate) fn get_last_equivocating_rounds(&self, validator: AuthorityIndex) -> VecDeque<Round> {
+        self.last_equivocating_rounds
+            .get(&validator)
+            .cloned()
+            .unwrap_or_else(|| VecDeque::from([GENESIS_ROUND]))
+    }
+    // Checks if the current round was already accounted for equivocation. To be used when an
+    // equivocating block is found to avoid doubly counting a round
+    pub(crate) fn was_equivating_round_accounted(&self, validator: AuthorityIndex, round: Round) -> Bool {
+            let eq_rounds_from_authority = self.get_last_equivocating_rounds(validator);
+            return eq_rounds_from_authority.contains(&round)
     }
 
 }

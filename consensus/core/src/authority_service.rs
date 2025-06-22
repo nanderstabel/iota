@@ -333,13 +333,12 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         }
         //Equivocation check and update
         if self.is_equivocating(block_ref) {
-            let last_round = self.context
+            if !self.context
                 .scoring_metrics
-                .get_last_equivocating_round(block_ref.author);
-            if u64::from(block_ref.round) > last_round {
+                .was_equivating_round_accounted(block_ref.author, block_ref.round) {
                 self.context
                     .scoring_metrics
-                    .update_last_equivocating_round(block_ref.author,block_ref.round);
+                    .update_last_equivocating_rounds(block_ref.author,block_ref.round);
                 self.context
                     .metrics
                     .node_metrics
@@ -429,13 +428,12 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         for block_ref in block_refs.clone() {
             if self.is_equivocating(block_ref) {
                 let peer_hostname = &self.context.committee.authority(block_ref.author).hostname;
-                let last_round = self.context
+                if !self.context
                     .scoring_metrics
-                    .get_last_equivocating_round(block_ref.author);
-                if u64::from(block_ref.round) > last_round {
+                    .was_equivating_round_accounted(block_ref.author, block_ref.round) {
                     self.context
                         .scoring_metrics
-                        .update_last_equivocating_round(block_ref.author,block_ref.round);
+                        .update_last_equivocating_rounds(block_ref.author,block_ref.round);
                     self.context
                         .metrics
                         .node_metrics
