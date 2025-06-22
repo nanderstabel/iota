@@ -2,12 +2,9 @@
 // Modifications Copyright (c) 2024 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use consensus_config::{AuthorityIndex, ProtocolPublicKey};
@@ -829,35 +826,6 @@ impl NodeMetrics {
 // the epoch change, but the value calculation no.
 // TO DO: check if ProtocolPublicKey is the best key type to use here.
 // ALSO TO DO: check if this is the best crate to store this.
-#[derive(Clone)]
-pub(crate) struct HistoricalValidatorScore(BTreeMap<ProtocolPublicKey, Vec<Option<u64>>>);
-
-impl HistoricalValidatorScore {
-    pub(crate) fn new() -> Self {
-        HistoricalValidatorScore(BTreeMap::new())
-    }
-
-    pub(crate) fn get(&self, key: &ProtocolPublicKey) -> Option<&Vec<Option<u64>>> {
-        self.0.get(key)
-    }
-
-    pub(crate) fn update(&mut self, values: Vec<(ProtocolPublicKey, u64)>) {
-        for (key, value) in values.iter() {
-            if let Some(v) = self.0.get_mut(&key) {
-                v.push(Some(*value));
-            } else {
-                self.0.insert(key.clone(), vec![Some(*value)]);
-            }
-        }
-        let updated_keys: Vec<ProtocolPublicKey> = values.iter().map(|(x, _)| x.clone()).collect();
-
-        for (key, value) in self.0.iter_mut() {
-            if !updated_keys.contains(key) {
-                value.push(None);
-            }
-        }
-    }
-}
 
 // Metrics stored related to the current epoch used to calculate the validator
 // score.
@@ -911,7 +879,6 @@ pub(crate) struct ValidatorScoreMetrics {
     // counting multiple times equivocation ocurrences.
     pub(crate) last_equivocating_round: Arc<Vec<AtomicU64>>,
 }
-
 
 // TO DO: check if we need Default for something else, otherwise just merge
 // default to ValidatorScoreMetrics.new

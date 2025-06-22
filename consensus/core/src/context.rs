@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use crate::metrics::test_metrics;
 use crate::{
     block::BlockTimestampMs,
-    metrics::{HistoricalValidatorScore, Metrics, ValidatorScoreMetrics},
+    metrics::{Metrics, ValidatorScoreMetrics},
 };
 /// Context contains per-epoch configuration and metrics shared by all
 /// components of this authority.
@@ -36,8 +36,6 @@ pub(crate) struct Context {
     pub clock: Arc<Clock>,
     /// Metrics used for scoring witch live on this authority
     pub scoring_metrics: ValidatorScoreMetrics,
-    /// Historical values of scores, as calculated by this authority
-    pub historical_scores: HistoricalValidatorScore,
 }
 
 impl Context {
@@ -49,7 +47,6 @@ impl Context {
         metrics: Arc<Metrics>,
         clock: Arc<Clock>,
         scoring_metrics: ValidatorScoreMetrics,
-        historical_scores: HistoricalValidatorScore,
     ) -> Self {
         Self {
             own_index,
@@ -59,7 +56,6 @@ impl Context {
             metrics,
             clock,
             scoring_metrics,
-            historical_scores,
         }
     }
 
@@ -74,7 +70,6 @@ impl Context {
         let temp_dir = TempDir::new().unwrap();
         let clock = Arc::new(Clock::new());
         let scoring_metrics = ValidatorScoreMetrics::new();
-        let historical_scores = HistoricalValidatorScore::new();
         let context = Context::new(
             AuthorityIndex::new_for_test(0),
             committee,
@@ -86,7 +81,6 @@ impl Context {
             metrics,
             clock,
             scoring_metrics,
-            historical_scores,
         );
         (context, keypairs)
     }
