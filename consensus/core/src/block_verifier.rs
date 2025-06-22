@@ -4,6 +4,8 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
+use consensus_config::AuthorityIndex;
+
 use crate::{
     Round,
     block::{
@@ -96,6 +98,24 @@ impl SignedBlockVerifier {
         }
         Ok(())
     }
+
+    fn update_semantically_invalid_blocks(
+        &self,
+        hostname: String,
+        block_author: AuthorityIndex,
+        function: &str,
+        reason: &str,
+    ) {
+        self.context
+            .metrics
+            .node_metrics
+            .semantically_invalid_blocks
+            .with_label_values(&[hostname, function.to_string(), reason.to_string()])
+            .inc();
+        self.context
+            .scoring_metrics
+            .update_semantically_invalid_blocks(block_author, 1);
+    }
 }
 
 // All block verification logic are implemented below.
@@ -105,48 +125,36 @@ impl BlockVerifier for SignedBlockVerifier {
         // The block must belong to the current epoch and have valid authority index,
         // before having its signature verified.
         if block.epoch() != committee.epoch() {
-            // Update prometheus metric
-            self.context
-                .metrics
-                .node_metrics
-                .semantically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "WrongEpoch".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_semantically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "WrongEpoch",
+            );
             return Err(ConsensusError::WrongEpoch {
                 expected: committee.epoch(),
                 actual: block.epoch(),
             });
         }
         if block.round() == 0 {
-            // Update prometheus metric
-            self.context
-                .metrics
-                .node_metrics
-                .semantically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "UnexpectedGenesisBlock".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_semantically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "UnexpectedGenesisBlock",
+            );
             return Err(ConsensusError::UnexpectedGenesisBlock);
         }
         if !committee.is_valid_index(block.author()) {
-            // Update prometheus metric
-            self.context
-                .metrics
-                .node_metrics
-                .semantically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InvalidAuthorityIndex".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_semantically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "InvalidAuthorityIndex",
+            );
             return Err(ConsensusError::InvalidAuthorityIndex {
                 index: block.author(),
                 max: committee.size() - 1,
@@ -155,49 +163,38 @@ impl BlockVerifier for SignedBlockVerifier {
 
         // Verify the block's signature.
         if let Err(e) = block.verify_signature(&self.context) {
-            // Update prometheus metric
-            self.context
-                .metrics
-                .node_metrics
-                .syntactically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "MalformedSignature".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_syntactically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "MalformedSignature",
+            );
             return Err(e);
         }
-
         // Verify the block's ancestor refs are consistent with the block's round,
         // and total parent stakes reach quorum.
         if block.ancestors().len() > committee.size() {
-            self.context
-                .metrics
-                .node_metrics
-                .semantically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "TooManyAncestors".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_semantically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "TooManyAncestors",
+            );
             return Err(ConsensusError::TooManyAncestors(
                 block.ancestors().len(),
                 committee.size(),
             ));
         }
         if block.ancestors().is_empty() {
-            self.context
-                .metrics
-                .node_metrics
-                .semantically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InsufficientParentStakes".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_semantically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "InsufficientParentStakes",
+            );
             return Err(ConsensusError::InsufficientParentStakes {
                 parent_stakes: 0,
                 quorum: committee.quorum_threshold(),
@@ -207,16 +204,13 @@ impl BlockVerifier for SignedBlockVerifier {
         let mut parent_stakes = 0;
         for (i, ancestor) in block.ancestors().iter().enumerate() {
             if !committee.is_valid_index(ancestor.author) {
-                self.context
-                    .metrics
-                    .node_metrics
-                    .semantically_invalid_blocks
-                    .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InvalidAuthorityIndex".to_string()])
-                    .inc();
-                // Update validator score
-                self.context
-                    .scoring_metrics
-                    .update_semantically_invalid_blocks(block.author(),1);
+                // Update prometheus metric and validator score
+                self.update_semantically_invalid_blocks(
+                    committee.authority(block.author()).hostname.clone(),
+                    block.author(),
+                    "verify",
+                    "InvalidAuthorityIndex",
+                );
                 return Err(ConsensusError::InvalidAuthorityIndex {
                     index: ancestor.author,
                     max: committee.size() - 1,
@@ -225,16 +219,13 @@ impl BlockVerifier for SignedBlockVerifier {
             if (i == 0 && ancestor.author != block.author())
                 || (i > 0 && ancestor.author == block.author())
             {
-                self.context
-                    .metrics
-                    .node_metrics
-                    .semantically_invalid_blocks
-                    .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InvalidAncestorPosition".to_string()])
-                    .inc();
-                // Update validator score
-                self.context
-                    .scoring_metrics
-                    .update_semantically_invalid_blocks(block.author(),1);
+                // Update prometheus metric and validator score
+                self.update_semantically_invalid_blocks(
+                    committee.authority(block.author()).hostname.clone(),
+                    block.author(),
+                    "verify",
+                    "InvalidAncestorPosition",
+                );
                 return Err(ConsensusError::InvalidAncestorPosition {
                     block_authority: block.author(),
                     ancestor_authority: ancestor.author,
@@ -242,45 +233,36 @@ impl BlockVerifier for SignedBlockVerifier {
                 });
             }
             if ancestor.round >= block.round() {
-                self.context
-                    .metrics
-                    .node_metrics
-                    .semantically_invalid_blocks
-                    .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InvalidAncestorRound".to_string()])
-                    .inc();
-                // Update validator score
-                self.context
-                    .scoring_metrics
-                    .update_semantically_invalid_blocks(block.author(),1);
+                // Update prometheus metric and validator score
+                self.update_semantically_invalid_blocks(
+                    committee.authority(block.author()).hostname.clone(),
+                    block.author(),
+                    "verify",
+                    "InvalidAncestorRound",
+                );
                 return Err(ConsensusError::InvalidAncestorRound {
                     ancestor: ancestor.round,
                     block: block.round(),
                 });
             }
             if ancestor.round == GENESIS_ROUND && !self.genesis.contains(ancestor) {
-                self.context
-                    .metrics
-                    .node_metrics
-                    .semantically_invalid_blocks
-                    .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InvalidGenesisAncestor".to_string()])
-                    .inc();
-                // Update validator score
-                self.context
-                    .scoring_metrics
-                    .update_semantically_invalid_blocks(block.author(),1);
+                // Update prometheus metric and validator score
+                self.update_semantically_invalid_blocks(
+                    committee.authority(block.author()).hostname.clone(),
+                    block.author(),
+                    "verify",
+                    "InvalidGenesisAncestor",
+                );
                 return Err(ConsensusError::InvalidGenesisAncestor(*ancestor));
             }
             if seen_ancestors[ancestor.author] {
-                self.context
-                    .metrics
-                    .node_metrics
-                    .semantically_invalid_blocks
-                    .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "DuplicatedAncestorsAuthority".to_string()])
-                    .inc();
-                // Update validator score
-                self.context
-                    .scoring_metrics
-                    .update_semantically_invalid_blocks(block.author(),1);
+                // Update prometheus metric and validator score
+                self.update_semantically_invalid_blocks(
+                    committee.authority(block.author()).hostname.clone(),
+                    block.author(),
+                    "verify",
+                    "DuplicatedAncestorsAuthority",
+                );
                 return Err(ConsensusError::DuplicatedAncestorsAuthority(
                     ancestor.author,
                 ));
@@ -292,16 +274,13 @@ impl BlockVerifier for SignedBlockVerifier {
             }
         }
         if !committee.reached_quorum(parent_stakes) {
-            self.context
-                .metrics
-                .node_metrics
-                .semantically_invalid_blocks
-                .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InsufficientParentStakes".to_string()])
-                .inc();
-            // Update validator score
-            self.context
-                .scoring_metrics
-                .update_semantically_invalid_blocks(block.author(),1);
+            // Update prometheus metric and validator score
+            self.update_semantically_invalid_blocks(
+                committee.authority(block.author()).hostname.clone(),
+                block.author(),
+                "verify",
+                "InsufficientParentStakes",
+            );
             return Err(ConsensusError::InsufficientParentStakes {
                 parent_stakes,
                 quorum: committee.quorum_threshold(),
@@ -317,17 +296,14 @@ impl BlockVerifier for SignedBlockVerifier {
             .verify_batch(&batch)
             .map_err(|e| ConsensusError::InvalidTransaction(format!("{e:?}")))
         {
-            Err(r) =>{
-                self.context
-                    .metrics
-                    .node_metrics
-                    .semantically_invalid_blocks
-                    .with_label_values(&[committee.authority(block.author()).hostname.clone(), "verify".to_string(), "InvalidTransaction".to_string()])
-                    .inc();
-                // Update validator score
-                self.context
-                    .scoring_metrics
-                    .update_semantically_invalid_blocks(block.author(),1);
+            Err(r) => {
+                // Update prometheus metric and validator score
+                self.update_semantically_invalid_blocks(
+                    committee.authority(block.author()).hostname.clone(),
+                    block.author(),
+                    "verify",
+                    "InvalidTransaction",
+                );
                 return Err(r);
             }
             Ok(o) => {

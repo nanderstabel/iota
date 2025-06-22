@@ -964,6 +964,8 @@ impl ValidatorScoreMetrics {
     pub(crate) fn get_semantically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
         self.semantically_invalid_blocks[validator.value()].load(Ordering::Relaxed)
     }
+
+    #[allow(dead_code)]
     pub(crate) fn get_syntactically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
         self.syntactically_invalid_blocks[validator.value()].load(Ordering::Relaxed)
     }
