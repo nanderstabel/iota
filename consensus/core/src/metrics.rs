@@ -15,8 +15,7 @@ use prometheus::{
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
 };
 
-use crate::network::metrics::NetworkMetrics;
-use crate::block::Round;
+use crate::{block::Round, network::metrics::NetworkMetrics};
 
 // starts from 1μs, 50μs, 100μs...
 const FINE_GRAINED_LATENCY_SEC_BUCKETS: &[f64] = &[
@@ -905,7 +904,7 @@ impl Default for ValidatorScoreMetrics {
             verified_blocks_this_epoch: Arc::new(verified_blocks_this_epoch_inner),
             first_round_this_epoch: Arc::new(AtomicU64::new(0)),
             last_seen_epoch: Arc::new(AtomicU64::new(0)),
-            last_equivocating_round: Arc::new(last_equivocating_round_inner)
+            last_equivocating_round: Arc::new(last_equivocating_round_inner),
         }
     }
 }
@@ -934,21 +933,12 @@ impl ValidatorScoreMetrics {
         let _ = self.syntactically_invalid_blocks[validator.value()]
             .fetch_add(increase, Ordering::Relaxed);
     }
-     pub(crate) fn update_missing_block_proposals(
-        &self,
-        validator: AuthorityIndex,
-        increase: u64,
-    ) {
-        let _ = self.missing_block_proposals[validator.value()]
-            .fetch_add(increase, Ordering::Relaxed);
+    pub(crate) fn update_missing_block_proposals(&self, validator: AuthorityIndex, increase: u64) {
+        let _ =
+            self.missing_block_proposals[validator.value()].fetch_add(increase, Ordering::Relaxed);
     }
-    pub(crate) fn update_equivocating_rounds(
-        &self,
-        validator: AuthorityIndex,
-        increase: u64,
-    ) {
-        let _ = self.equivocating_rounds[validator.value()]
-            .fetch_add(increase, Ordering::Relaxed);
+    pub(crate) fn update_equivocating_rounds(&self, validator: AuthorityIndex, increase: u64) {
+        let _ = self.equivocating_rounds[validator.value()].fetch_add(increase, Ordering::Relaxed);
     }
 
     pub(crate) fn update_verified_blocks_this_epoch(
@@ -959,26 +949,16 @@ impl ValidatorScoreMetrics {
         let _ = self.verified_blocks_this_epoch[validator.value()]
             .fetch_add(increase, Ordering::Relaxed);
     }
-    pub(crate) fn update_first_round_this_epoch(
-        &self,
-        round: Round,
-    ) {
-        self.first_round_this_epoch.store(u64::from(round), Ordering::Relaxed);
+    pub(crate) fn update_first_round_this_epoch(&self, round: Round) {
+        self.first_round_this_epoch
+            .store(u64::from(round), Ordering::Relaxed);
     }
-    pub(crate) fn update_last_seen_epoch(
-        &self,
-        epoch: u64,
-    ) {
+    pub(crate) fn update_last_seen_epoch(&self, epoch: u64) {
         self.first_round_this_epoch.store(epoch, Ordering::Relaxed);
     }
 
-    pub(crate) fn update_last_equivocating_round(
-        &self,
-        validator: AuthorityIndex,
-        round: u32,
-    ) {
-        self.last_equivocating_round[validator.value()]
-            .store(u64::from(round), Ordering::Relaxed);
+    pub(crate) fn update_last_equivocating_round(&self, validator: AuthorityIndex, round: u32) {
+        self.last_equivocating_round[validator.value()].store(u64::from(round), Ordering::Relaxed);
     }
 
     pub(crate) fn get_semantically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
@@ -1002,7 +982,7 @@ impl ValidatorScoreMetrics {
     pub(crate) fn get_last_seen_epoch(&self) -> u64 {
         self.last_seen_epoch.load(Ordering::Relaxed)
     }
-    pub(crate) fn reset_verified_blocks_this_epoch(&self)  {
+    pub(crate) fn reset_verified_blocks_this_epoch(&self) {
         for element in self.verified_blocks_this_epoch.iter() {
             element.store(0, Ordering::Relaxed);
         }
@@ -1010,5 +990,4 @@ impl ValidatorScoreMetrics {
     pub(crate) fn get_last_equivocating_round(&self, validator: AuthorityIndex) -> u64 {
         self.last_equivocating_round[validator.value()].load(Ordering::Relaxed)
     }
-
 }

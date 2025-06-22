@@ -14,7 +14,6 @@ use crate::{
     error::{ConsensusError, ConsensusResult},
     transaction::TransactionVerifier,
 };
-
 pub(crate) trait BlockVerifier: Send + Sync + 'static {
     /// Verifies a block's metadata and transactions.
     /// This is called before examining a block's causal history.
@@ -313,7 +312,8 @@ impl BlockVerifier for SignedBlockVerifier {
 
         self.check_transactions(&batch)?;
 
-        match self.transaction_verifier
+        match self
+            .transaction_verifier
             .verify_batch(&batch)
             .map_err(|e| ConsensusError::InvalidTransaction(format!("{e:?}")))
         {
@@ -330,7 +330,9 @@ impl BlockVerifier for SignedBlockVerifier {
                     .update_semantically_invalid_blocks(block.author(),1);
                 return Err(r);
             }
-            Ok(o) => {return Ok(o);}
+            Ok(o) => {
+                return Ok(o);
+            }
         }
     }
 
