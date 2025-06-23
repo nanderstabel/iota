@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap,VecDeque,HashMap},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
+        Mutex,
     },
 };
 
@@ -19,7 +20,7 @@ use prometheus::{
 };
 
 use crate::network::metrics::NetworkMetrics;
-use crate::block::Round;
+use crate::block::{Round,GENESIS_ROUND};
 
 // starts from 1μs, 50μs, 100μs...
 const FINE_GRAINED_LATENCY_SEC_BUCKETS: &[f64] = &[
@@ -880,7 +881,7 @@ pub(crate) struct ValidatorScoreMetrics {
     pub(crate) last_seen_epoch: Arc<AtomicU64>,
     // Registers the last round where an equivocation was found for each authority. Used to avoid
     // counting multiple times equivocation ocurrences.
-    pub(crate) last_equivocating_rounds: HashMap<AuthorityIndex,VecDeque<Round>>,
+    pub(crate) last_equivocating_rounds: Arc<Mutex<HashMap<AuthorityIndex,VecDeque<Round>>>>,
 }
 
 // TO DO: check if we need Default for something else, otherwise just merge
@@ -907,7 +908,7 @@ impl Default for ValidatorScoreMetrics {
             verified_blocks_this_epoch: Arc::new(verified_blocks_this_epoch_inner),
             first_round_this_epoch: Arc::new(AtomicU64::new(0)),
             last_seen_epoch: Arc::new(AtomicU64::new(0)),
-            last_equivocating_round: last_equivocating_round_inner
+            last_equivocating_rounds: Arc::new(Mutex::new(last_equivocating_rounds_inner)),
         }
     }
 }
@@ -956,12 +957,7 @@ impl ValidatorScoreMetrics {
         self.first_round_this_epoch
             .store(u64::from(round), Ordering::Relaxed);
     }
-    pub(crate) fn update_first_round_this_epoch(
-        &self,
-        round: Round,
-    ) {
-        self.first_round_this_epoch.store(u64::from(round), Ordering::Relaxed);
-    }
+
     pub(crate) fn update_last_seen_epoch(
         &self,
         epoch: u64,
@@ -970,23 +966,17 @@ impl ValidatorScoreMetrics {
     }
 
     pub(crate) fn update_last_equivocating_rounds(
-        &mut self,
+        &self,
         validator: AuthorityIndex,
         round: u32,
     ) {
-        if let Some(rounds) = self.last_equivocating_rounds.get_mut(&validator) {
-            if rounds.len() >= 100 {
-                rounds.pop_front();
-            }
-            rounds.push_back(round);
+        let mut rounds_map = self.last_equivocating_rounds.lock().unwrap();
+        let rounds = rounds_map.entry(validator).or_default();
+        if rounds.len() >= 100 {
+            rounds.pop_front();
         }
-    }
-    pub(crate) fn update_last_seen_epoch(&self, epoch: u64) {
-        self.first_round_this_epoch.store(epoch, Ordering::Relaxed);
-    }
+        rounds.push_back(round);
 
-    pub(crate) fn update_last_equivocating_round(&self, validator: AuthorityIndex, round: u32) {
-        self.last_equivocating_round[validator.value()].store(u64::from(round), Ordering::Relaxed);
     }
 
     pub(crate) fn get_semantically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
@@ -1019,13 +1009,15 @@ impl ValidatorScoreMetrics {
     }
     pub(crate) fn get_last_equivocating_rounds(&self, validator: AuthorityIndex) -> VecDeque<Round> {
         self.last_equivocating_rounds
+            .lock()
+            .unwrap()
             .get(&validator)
             .cloned()
             .unwrap_or_else(|| VecDeque::from([GENESIS_ROUND]))
     }
     // Checks if the current round was already accounted for equivocation. To be used when an
     // equivocating block is found to avoid doubly counting a round
-    pub(crate) fn was_equivating_round_accounted(&self, validator: AuthorityIndex, round: Round) -> Bool {
+    pub(crate) fn was_equivating_round_accounted(&self, validator: AuthorityIndex, round: Round) -> bool {
             let eq_rounds_from_authority = self.get_last_equivocating_rounds(validator);
             return eq_rounds_from_authority.contains(&round)
     }
