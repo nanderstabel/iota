@@ -829,35 +829,6 @@ impl NodeMetrics {
 // the epoch change, but the value calculation no.
 // TO DO: check if ProtocolPublicKey is the best key type to use here.
 // ALSO TO DO: check if this is the best crate to store this.
-#[derive(Clone)]
-pub(crate) struct HistoricalValidatorScore(BTreeMap<ProtocolPublicKey, Vec<Option<u64>>>);
-
-impl HistoricalValidatorScore {
-    pub(crate) fn new() -> Self {
-        HistoricalValidatorScore(BTreeMap::new())
-    }
-
-    pub(crate) fn get(&self, key: &ProtocolPublicKey) -> Option<&Vec<Option<u64>>> {
-        self.0.get(key)
-    }
-
-    pub(crate) fn update(&mut self, values: Vec<(ProtocolPublicKey, u64)>) {
-        for (key, value) in values.iter() {
-            if let Some(v) = self.0.get_mut(&key) {
-                v.push(Some(*value));
-            } else {
-                self.0.insert(key.clone(), vec![Some(*value)]);
-            }
-        }
-        let updated_keys: Vec<ProtocolPublicKey> = values.iter().map(|(x, _)| x.clone()).collect();
-
-        for (key, value) in self.0.iter_mut() {
-            if !updated_keys.contains(key) {
-                value.push(None);
-            }
-        }
-    }
-}
 
 // Metrics stored related to the current epoch used to calculate the validator
 // score.
@@ -912,7 +883,6 @@ pub(crate) struct ValidatorScoreMetrics {
     pub(crate) last_equivocating_rounds: HashMap<AuthorityIndex,VecDeque<Round>>,
 }
 
-
 // TO DO: check if we need Default for something else, otherwise just merge
 // default to ValidatorScoreMetrics.new
 impl Default for ValidatorScoreMetrics {
@@ -966,21 +936,12 @@ impl ValidatorScoreMetrics {
         let _ = self.syntactically_invalid_blocks[validator.value()]
             .fetch_add(increase, Ordering::Relaxed);
     }
-     pub(crate) fn update_missing_block_proposals(
-        &self,
-        validator: AuthorityIndex,
-        increase: u64,
-    ) {
-        let _ = self.missing_block_proposals[validator.value()]
-            .fetch_add(increase, Ordering::Relaxed);
+    pub(crate) fn update_missing_block_proposals(&self, validator: AuthorityIndex, increase: u64) {
+        let _ =
+            self.missing_block_proposals[validator.value()].fetch_add(increase, Ordering::Relaxed);
     }
-    pub(crate) fn update_equivocating_rounds(
-        &self,
-        validator: AuthorityIndex,
-        increase: u64,
-    ) {
-        let _ = self.equivocating_rounds[validator.value()]
-            .fetch_add(increase, Ordering::Relaxed);
+    pub(crate) fn update_equivocating_rounds(&self, validator: AuthorityIndex, increase: u64) {
+        let _ = self.equivocating_rounds[validator.value()].fetch_add(increase, Ordering::Relaxed);
     }
 
     pub(crate) fn update_verified_blocks_this_epoch(
@@ -991,6 +952,9 @@ impl ValidatorScoreMetrics {
         let _ = self.verified_blocks_this_epoch[validator.value()]
             .fetch_add(increase, Ordering::Relaxed);
     }
+    pub(crate) fn update_first_round_this_epoch(&self, round: Round) {
+        self.first_round_this_epoch
+            .store(u64::from(round), Ordering::Relaxed);
     pub(crate) fn update_first_round_this_epoch(
         &self,
         round: Round,
@@ -1016,10 +980,19 @@ impl ValidatorScoreMetrics {
             rounds.push_back(round);
         }
     }
+    pub(crate) fn update_last_seen_epoch(&self, epoch: u64) {
+        self.first_round_this_epoch.store(epoch, Ordering::Relaxed);
+    }
+
+    pub(crate) fn update_last_equivocating_round(&self, validator: AuthorityIndex, round: u32) {
+        self.last_equivocating_round[validator.value()].store(u64::from(round), Ordering::Relaxed);
+    }
 
     pub(crate) fn get_semantically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
         self.semantically_invalid_blocks[validator.value()].load(Ordering::Relaxed)
     }
+
+    #[allow(dead_code)]
     pub(crate) fn get_syntactically_invalid_blocks(&self, validator: AuthorityIndex) -> u64 {
         self.syntactically_invalid_blocks[validator.value()].load(Ordering::Relaxed)
     }
@@ -1038,7 +1011,7 @@ impl ValidatorScoreMetrics {
     pub(crate) fn get_last_seen_epoch(&self) -> u64 {
         self.last_seen_epoch.load(Ordering::Relaxed)
     }
-    pub(crate) fn reset_verified_blocks_this_epoch(&self)  {
+    pub(crate) fn reset_verified_blocks_this_epoch(&self) {
         for element in self.verified_blocks_this_epoch.iter() {
             element.store(0, Ordering::Relaxed);
         }
@@ -1055,5 +1028,4 @@ impl ValidatorScoreMetrics {
             let eq_rounds_from_authority = self.get_last_equivocating_rounds(validator);
             return eq_rounds_from_authority.contains(&round)
     }
-
 }
