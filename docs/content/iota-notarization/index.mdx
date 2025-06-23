@@ -53,3 +53,27 @@ IOTA stands apart as a scalable Distributed Ledger Technology (DLT), making it u
 * **High Availability**: Notarized data is stored on every node in the IOTA network, ensuring it is always available for verifiers around the globe.
 * **Security**: Write access to a Notarization object is exclusively controlled by the owner's private keys, preventing any unauthorized modifications.
 * **Integrity**: Updates and state transitions are secured by the same robust consensus mechanism that secures the entire IOTA network, guaranteeing the consistency and immutability of every record.
+
+## Key Actors in the Notarization Process
+
+The IOTA Notarization framework involves two primary actors that work together to ensure data integrity and verification:
+
+### Prover
+
+The **Prover** is responsible for creating and submitting notarization transactions that embed immutable data into the IOTA network.
+
+**Key Responsibilities:**
+- Generate cryptographic hashes of documents, media files, or any data requiring notarization
+- Submit transactions that store this data on the IOTA network, ensuring immutability
+- Maintain original documents off-chain while linking them to on-chain records through unique object IDs (for privacy-focused implementations)
+- Optionally store complete data on-chain using the notarization object as the official data repository
+
+### Verifier
+
+The **Verifier** confirms the integrity and immutability of data by validating information stored on the IOTA ledger.
+
+**Key Responsibilities:**
+- Request original documents and their associated object IDs from the Prover
+- Query the IOTA network through the Notarization Library to retrieve stored data using object IDs
+- Validate that data stored in the ledger matches the original document (for hash-based verification)
+- Verify the authenticity and integrity of on-chain stored data independently
