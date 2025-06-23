@@ -955,6 +955,7 @@ impl ValidatorScoreMetrics {
     pub(crate) fn update_first_round_this_epoch(&self, round: Round) {
         self.first_round_this_epoch
             .store(u64::from(round), Ordering::Relaxed);
+    }
     pub(crate) fn update_first_round_this_epoch(
         &self,
         round: Round,

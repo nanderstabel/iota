@@ -19,13 +19,13 @@ services:
   prometheus:
     image: prom/prometheus:latest
     command:
-      - --config.file=/etc/prometheus.yaml
+      - --config.file=/etc/prometheus/prometheus.yaml
       - --web.enable-remote-write-receiver
       - --enable-feature=exemplar-storage
     networks:
       iota-network:
     volumes:
-      - ./prometheus.yaml:/etc/prometheus.yaml
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml
     ports:
       - "9090:9090"
     extra_hosts:
