@@ -20,7 +20,7 @@ use iota_metrics::{
 use itertools::Itertools as _;
 use parking_lot::{Mutex, RwLock};
 #[cfg(not(test))]
-use rand::{prelude::SliceRandom, rngs::ThreadRng};
+use rand::{prelude::SliceRandom, rngs::ThreadRng, seq::IteratorRandom};
 use tap::TapFallible;
 use tokio::{
     runtime::Handle,
@@ -1033,48 +1033,47 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         let highest_rounds = Self::get_highest_accepted_rounds(dag_state, &context);
 
         // For any missing block with > HOT_DEPENDENT_THRESHOLD dependents,
-        // we proactively fetch it from one random dependent-author peer.
+        // we proactively fetch it from one random dependent-author peer, grouping all
+        // hot blocks that peer is likely to know.
         const HOT_DEPENDENT_THRESHOLD: usize = 50;
         {
             // Acquire the lock on the BlockManager
             let bm = block_manager.read();
 
-            missing_blocks
-                .iter()
-                .filter(|&missing| bm.dependent_count(missing) > HOT_DEPENDENT_THRESHOLD)
-                .for_each(|missing| {
-                    // Always bind authors as mutable to allow shuffling in non-test environments.
-                    // In test builds, the `mut` is unused, so we silence Clippy.
-                    #[allow(unused_mut)]
-                    let mut authors = bm.dependents_of(missing);
-
-                    #[cfg(not(test))]
-                    authors.shuffle(&mut ThreadRng::default());
-
-                    if let Some(peer) = authors.first().copied() {
-                        // BlockRef is Copy, so Clippy suggests using `*missing` instead of
-                        // `.clone()`. However, using `*missing` here breaks
-                        // type inference in this context, while `.clone()`
-                        // is clear, safe, and equivalent. We explicitly
-                        // allow Clippy's warning for clarity and correctness.
-                        #[allow(clippy::clone_on_copy)]
-                        let block_set = std::iter::once(missing.clone()).collect::<BTreeSet<_>>();
-                        if let Some(guard) = inflight_blocks.lock_blocks(block_set, peer) {
-                            info!(
-                                "Hot fetch of missing block {} from dependent-author peer {}",
-                                missing, peer
-                            );
-                            request_futures.push(Self::fetch_blocks_request(
-                                network_client.clone(),
-                                peer,
-                                guard,
-                                highest_rounds.clone(),
-                                FETCH_REQUEST_TIMEOUT,
-                                1,
-                            ));
+            if bm.num_suspended_blocks() > HOT_DEPENDENT_THRESHOLD {
+                // Step 1: Collect all hot blocks and map of authors to their missing blocks
+                let mut author_to_blocks: HashMap<AuthorityIndex, Vec<BlockRef>> = HashMap::new();
+                for missing in &missing_blocks {
+                    if bm.dependent_count(missing) > HOT_DEPENDENT_THRESHOLD {
+                        for author in bm.dependents_of(missing) {
+                            author_to_blocks.entry(author).or_default().push(*missing);
                         }
                     }
-                });
+                }
+                // Step 2: Choose one random authority from the map
+                if let Some((&chosen_author, blocks)) =
+                    author_to_blocks.iter().choose(&mut rand::thread_rng())
+                {
+                    let block_set = blocks.iter().copied().collect::<BTreeSet<_>>();
+                    if let Some(guard) =
+                        inflight_blocks.lock_blocks(block_set.clone(), chosen_author)
+                    {
+                        info!(
+                            "Hot fetch of {} high-fanout blocks from peer {}",
+                            block_set.len(),
+                            chosen_author
+                        );
+                        request_futures.push(Self::fetch_blocks_request(
+                            network_client.clone(),
+                            chosen_author,
+                            guard,
+                            highest_rounds.clone(),
+                            FETCH_REQUEST_TIMEOUT,
+                            block_set.len() as u32,
+                        ));
+                    }
+                }
+            }
         }
 
         // Proceed with the usual fetching
