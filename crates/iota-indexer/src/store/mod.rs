@@ -224,9 +224,7 @@ pub mod diesel_macro {
             transactional_blocking_with_retry!(
                 $pool,
                 |conn| {
-                    for chunk in $chunk.chunks(PG_COMMIT_CHUNK_SIZE_INTRA_DB_TX) {
-                        insert_or_ignore_into!($table, chunk, conn);
-                    }
+                    persist_chunk_into_table_in_existing_connection!($table, $chunk, conn);
                     Ok::<(), IndexerError>(())
                 },
                 PG_DB_COMMIT_SLEEP_DURATION
@@ -243,6 +241,15 @@ pub mod diesel_macro {
             .tap_err(|e| {
                 tracing::error!("Failed to persist {} with error: {}", stringify!($table), e);
             })
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! persist_chunk_into_table_in_existing_connection {
+        ($table:expr, $chunk:expr, $conn:expr) => {{
+            for chunk in $chunk.chunks(PG_COMMIT_CHUNK_SIZE_INTRA_DB_TX) {
+                insert_or_ignore_into!($table, chunk, $conn);
+            }
         }};
     }
 
