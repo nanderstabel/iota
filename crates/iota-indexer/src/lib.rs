@@ -26,10 +26,12 @@ use url::Url;
 
 use crate::{
     apis::{
-        CoinReadApi, ExtendedApi, GovernanceReadApi, IndexerApi, MoveUtilsApi, ReadApi,
-        TransactionBuilderApi, WriteApi,
+        CoinReadApi, ExtendedApi, GovernanceReadApi, IndexerApi, MoveUtilsApi, OptimisticWriteApi,
+        ReadApi, TransactionBuilderApi, WriteApi,
     },
     indexer_reader::IndexerReader,
+    optimistic_indexing::OptimisticTransactionExecutor,
+    store::PgIndexerStore,
 };
 
 pub mod apis;
@@ -40,6 +42,7 @@ pub mod indexer;
 pub mod indexer_reader;
 pub mod metrics;
 pub mod models;
+mod optimistic_indexing;
 pub mod processors;
 pub mod schema;
 pub mod store;
@@ -229,17 +232,21 @@ impl Default for IotaNamesOptions {
     }
 }
 
-pub async fn build_json_rpc_server(
+async fn build_common_json_rpc_server(
     prometheus_registry: &Registry,
     reader: IndexerReader,
     config: &IndexerConfig,
     custom_runtime: Option<Handle>,
+    register_api_fn: impl FnOnce(JsonRpcServerBuilder) -> Result<JsonRpcServerBuilder, IndexerError>,
 ) -> Result<ServerHandle, IndexerError> {
-    let mut builder =
-        JsonRpcServerBuilder::new(env!("CARGO_PKG_VERSION"), prometheus_registry, None, None);
-    let http_client = crate::get_http_client(config.rpc_client_url.as_str())?;
+    let mut builder = register_api_fn(JsonRpcServerBuilder::new(
+        env!("CARGO_PKG_VERSION"),
+        prometheus_registry,
+        None,
+        None,
+    ))?;
 
-    builder.register_module(WriteApi::new(http_client.clone()))?;
+    // Register common modules
     builder.register_module(IndexerApi::new(
         reader.clone(),
         config.iota_names_options.clone().into(),
@@ -272,6 +279,56 @@ pub async fn build_json_rpc_server(
             Some(cancel),
         )
         .await?)
+}
+
+pub async fn build_json_rpc_server(
+    prometheus_registry: &Registry,
+    reader: IndexerReader,
+    config: &IndexerConfig,
+    custom_runtime: Option<Handle>,
+) -> Result<ServerHandle, IndexerError> {
+    build_common_json_rpc_server(
+        prometheus_registry,
+        reader,
+        config,
+        custom_runtime,
+        |mut builder| {
+            let http_client = get_http_client(config.rpc_client_url.as_str())?;
+            builder.register_module(WriteApi::new(http_client))?;
+            Ok(builder)
+        },
+    )
+    .await
+}
+
+pub async fn build_optimistic_json_rpc_server(
+    store: PgIndexerStore,
+    prometheus_registry: &Registry,
+    reader: IndexerReader,
+    config: &IndexerConfig,
+    custom_runtime: Option<Handle>,
+    metrics: IndexerMetrics,
+) -> Result<ServerHandle, IndexerError> {
+    build_common_json_rpc_server(
+        prometheus_registry,
+        reader.clone(),
+        config,
+        custom_runtime,
+        |mut builder| {
+            let http_client = get_http_client(config.rpc_client_url.as_str())?;
+            builder.register_module(OptimisticWriteApi::new(
+                WriteApi::new(http_client),
+                OptimisticTransactionExecutor::new(
+                    config.rpc_client_url.as_str(),
+                    reader,
+                    store,
+                    metrics,
+                ),
+            ))?;
+            Ok(builder)
+        },
+    )
+    .await
 }
 
 fn get_http_client(rpc_client_url: &str) -> Result<HttpClient, IndexerError> {
