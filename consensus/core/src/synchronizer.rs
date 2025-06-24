@@ -1056,23 +1056,28 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
 
                 #[cfg(test)]
                 let chosen = author_to_blocks.iter().next();
-                if let Some((&chosen_author, blocks)) = chosen {
-                    let block_set = blocks.iter().copied().collect::<BTreeSet<_>>();
-                    if let Some(guard) =
-                        inflight_blocks.lock_blocks(block_set.clone(), chosen_author)
-                    {
+                if let Some((&peer, blocks)) = chosen {
+                    let block_refs = blocks.iter().copied().collect::<BTreeSet<_>>();
+                    if let Some(guard) = inflight_blocks.lock_blocks(block_refs.clone(), peer) {
+                        let peer_hostname = &context.committee.authority(peer).hostname;
                         info!(
-                            "Hot fetch of {} high-fanout blocks from peer {}",
-                            block_set.len(),
-                            chosen_author
+                            "Hot fetch of {} high-fanout blocks from peer {} {} (blocks: [{}])",
+                            block_refs.len(),
+                            peer,
+                            peer_hostname,
+                            block_refs
+                                .iter()
+                                .map(|b| b.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         );
                         request_futures.push(Self::fetch_blocks_request(
                             network_client.clone(),
-                            chosen_author,
+                            peer,
                             guard,
                             highest_rounds.clone(),
                             FETCH_REQUEST_TIMEOUT,
-                            block_set.len() as u32,
+                            block_refs.len() as u32,
                         ));
                     }
                 }
