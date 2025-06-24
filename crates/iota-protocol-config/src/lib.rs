@@ -59,7 +59,7 @@ pub const MAX_PROTOCOL_VERSION: u64 = 10;
 //            Enable the new consensus commit rule for mainnet.
 //            Increase the committee size to 80.
 //            Enable passkey auth in multisig for devnet.
-// Version 10: TODO.
+// Version 10: Enable Identifier input validation.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -283,6 +283,10 @@ struct FeatureFlags {
     // If true, multisig containing passkey sig is accepted.
     #[serde(skip_serializing_if = "is_false")]
     accept_passkey_in_multisig: bool,
+
+    // Validate identifier inputs separately
+    #[serde(skip_serializing_if = "is_false")]
+    validate_identifier_inputs: bool,
 }
 
 fn is_true(b: &bool) -> bool {
@@ -1260,6 +1264,10 @@ impl ProtocolConfig {
     pub fn accept_passkey_in_multisig(&self) -> bool {
         self.feature_flags.accept_passkey_in_multisig
     }
+
+    pub fn validate_identifier_inputs(&self) -> bool {
+        self.feature_flags.validate_identifier_inputs
+    }
 }
 
 #[cfg(not(msim))]
@@ -2023,7 +2031,9 @@ impl ProtocolConfig {
                         cfg.feature_flags.accept_passkey_in_multisig = true;
                     }
                 }
-                10 => {}
+                10 => {
+                    cfg.feature_flags.validate_identifier_inputs = true;
+                }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
