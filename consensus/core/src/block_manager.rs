@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-
+use std::collections::HashSet;
 use consensus_config::AuthorityIndex;
 use iota_metrics::monitored_scope;
 use itertools::Itertools as _;
@@ -729,26 +729,30 @@ impl BlockManager {
 
     /// Returns how many suspended blocks list `missing` as one of their
     /// missing ancestors.
-    pub fn dependent_count(&self, missing: &BlockRef) -> usize {
+    pub(crate) fn dependent_count(&self, missing: &BlockRef) -> usize {
         self.missing_ancestors
             .get(missing)
-            .map(|children| children.len())
+            .map(|dependents| dependents.len())
             .unwrap_or(0)
     }
 
     /// Returns the list of authority indices that authored suspended blocks
     /// which list `missing` as one of their missing ancestors.
-    pub fn dependents_of(&self, missing: &BlockRef) -> Vec<AuthorityIndex> {
-        self.missing_ancestors
-            .get(missing)
-            .map(|children| {
-                children
-                    .iter()
-                    .filter_map(|child_ref| self.suspended_blocks.get(child_ref))
-                    .map(|sb| sb.block.author())
-                    .collect()
-            })
-            .unwrap_or_default()
+    pub(crate) fn dependents_of(&self, missing: &BlockRef) -> Vec<AuthorityIndex> {
+       if let Some(dependents) = self.missing_ancestors.get(missing) {
+           let mut seen = HashSet::with_capacity(dependents.len());
+           let mut result = Vec::new();
+           for dependent in dependents {
+               let sb = self.suspended_blocks.get(dependent).expect("Suspended block for missing ancestor should exist.");
+               let author = sb.block.author();
+               if seen.insert(author) {
+                   result.push(author);
+               }
+           }
+           result
+       } else { Vec::new() }
+
+
     }
 
     /// Checks if block manager is empty.
