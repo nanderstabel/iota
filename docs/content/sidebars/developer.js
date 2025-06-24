@@ -331,6 +331,7 @@ const developer = [
             },
             'developer/tutorials/live-concert',
             'developer/tutorials/retail-store',
+            'developer/tutorials/validate-university-degree',
         ],
     },
     {
