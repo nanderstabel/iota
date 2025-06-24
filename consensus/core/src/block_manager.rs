@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
     time::Instant,
 };
-use std::collections::HashSet;
+
 use consensus_config::AuthorityIndex;
 use iota_metrics::monitored_scope;
 use itertools::Itertools as _;
@@ -739,20 +739,23 @@ impl BlockManager {
     /// Returns the list of authority indices that authored suspended blocks
     /// which list `missing` as one of their missing ancestors.
     pub(crate) fn dependents_of(&self, missing: &BlockRef) -> Vec<AuthorityIndex> {
-       if let Some(dependents) = self.missing_ancestors.get(missing) {
-           let mut seen = HashSet::with_capacity(dependents.len());
-           let mut result = Vec::new();
-           for dependent in dependents {
-               let sb = self.suspended_blocks.get(dependent).expect("Suspended block for missing ancestor should exist.");
-               let author = sb.block.author();
-               if seen.insert(author) {
-                   result.push(author);
-               }
-           }
-           result
-       } else { Vec::new() }
-
-
+        if let Some(dependents) = self.missing_ancestors.get(missing) {
+            let mut seen = HashSet::with_capacity(dependents.len());
+            let mut result = Vec::new();
+            for dependent in dependents {
+                let sb = self
+                    .suspended_blocks
+                    .get(dependent)
+                    .expect("Suspended block for missing ancestor should exist.");
+                let author = sb.block.author();
+                if seen.insert(author) {
+                    result.push(author);
+                }
+            }
+            result
+        } else {
+            Vec::new()
+        }
     }
 
     /// Checks if block manager is empty.

@@ -1051,9 +1051,12 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                     }
                 }
                 // Step 2: Choose one random authority from the map
-                if let Some((&chosen_author, blocks)) =
-                    author_to_blocks.iter().choose(&mut rand::thread_rng())
-                {
+                #[cfg(not(test))]
+                let chosen = author_to_blocks.iter().choose(&mut ThreadRng::default());
+
+                #[cfg(test)]
+                let chosen = author_to_blocks.iter().next();
+                if let Some((&chosen_author, blocks)) = chosen {
                     let block_set = blocks.iter().copied().collect::<BTreeSet<_>>();
                     if let Some(guard) =
                         inflight_blocks.lock_blocks(block_set.clone(), chosen_author)
