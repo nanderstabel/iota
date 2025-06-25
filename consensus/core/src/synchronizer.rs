@@ -1032,36 +1032,40 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
 
         let highest_rounds = Self::get_highest_accepted_rounds(dag_state, &context);
 
-        // For any missing block with > HOT_DEPENDENT_THRESHOLD dependents,
-        // we proactively fetch it from one random dependent-author peer, grouping all
-        // hot blocks that peer is likely to know.
-        const HOT_DEPENDENT_THRESHOLD: usize = 50;
+        // Hot-path: when the ratio of suspended to missing blocks exceeds
+        // HOT_FETCH_RATIO_THRESHOLD, proactively fetch a batch of missing
+        // blocks from the authors of blocks referencing them.
+        const HOT_FETCH_RATIO_THRESHOLD: usize = 50;
         {
             // Acquire the lock on the BlockManager
             let bm = block_manager.read();
 
-            if bm.num_suspended_blocks() > HOT_DEPENDENT_THRESHOLD {
-                // Step 1: Collect all hot blocks and map of authors to their missing blocks
+            if bm.num_suspended_blocks() > HOT_FETCH_RATIO_THRESHOLD {
+                // Step 1: Map authors to their missing blocks
                 let mut author_to_blocks: HashMap<AuthorityIndex, Vec<BlockRef>> = HashMap::new();
                 for missing in &missing_blocks {
-                    if bm.dependent_count(missing) > HOT_DEPENDENT_THRESHOLD {
-                        for author in bm.dependents_of(missing) {
-                            author_to_blocks.entry(author).or_default().push(*missing);
-                        }
+                    for author in bm.dependents_of(missing) {
+                        author_to_blocks.entry(author).or_default().push(*missing);
                     }
                 }
                 // Step 2: Choose one random authority from the map
+
                 #[cfg(not(test))]
                 let chosen = author_to_blocks.iter().choose(&mut ThreadRng::default());
 
                 #[cfg(test)]
                 let chosen = author_to_blocks.iter().next();
+
                 if let Some((&peer, blocks)) = chosen {
-                    let block_refs = blocks.iter().copied().collect::<BTreeSet<_>>();
+                    let block_refs = blocks
+                        .iter()
+                        .copied()
+                        .take(MAX_BLOCKS_PER_FETCH)
+                        .collect::<BTreeSet<_>>();
                     if let Some(guard) = inflight_blocks.lock_blocks(block_refs.clone(), peer) {
                         let peer_hostname = &context.committee.authority(peer).hostname;
                         info!(
-                            "Hot fetch of {} high-fanout blocks from peer {} {} (blocks: [{}])",
+                            "Hot fetch of {} blocks from peer {} {} (blocks: [{}])",
                             block_refs.len(),
                             peer,
                             peer_hostname,
@@ -1077,7 +1081,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                             guard,
                             highest_rounds.clone(),
                             FETCH_REQUEST_TIMEOUT,
-                            block_refs.len() as u32,
+                            1,
                         ));
                     }
                 }
