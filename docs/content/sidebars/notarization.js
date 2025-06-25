@@ -2,25 +2,25 @@
 // Modifications Copyright (c) 2024 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 const notarization = [
-    'iota-notarization/index',
+    'developer/iota-notarization/index',
     {
         type: 'category',
         label: 'Getting Started',
         collapsed: false,
         items: [
-            'iota-notarization/getting-started/rust',
-            'iota-notarization/getting-started/wasm',
-            'iota-notarization/getting-started/local-network-setup',
+            'developer/iota-notarization/getting-started/rust',
+            'developer/iota-notarization/getting-started/wasm',
+            'developer/iota-notarization/getting-started/local-network-setup',
         ],
     },
     {
         type: 'category',
         label: 'Explanations',
         items: [
-            'iota-notarization/explanations/about-notarization',
-            'iota-notarization/explanations/dynamic-notarization',
-            'iota-notarization/explanations/locked-notarization',
-            'iota-notarization/explanations/notarization-comparison',
+            'developer/iota-notarization/explanations/about-notarization',
+            'developer/iota-notarization/explanations/dynamic-notarization',
+            'developer/iota-notarization/explanations/locked-notarization',
+            'developer/iota-notarization/explanations/notarization-comparison',
         ],
     },
     {
@@ -31,22 +31,22 @@ const notarization = [
                 type: 'category',
                 label: 'Dynamic Notarizations',
                 items: [
-                    'iota-notarization/how-tos/dynamic-notarizations/create',
-                    'iota-notarization/how-tos/dynamic-notarizations/update-state',
-                    'iota-notarization/how-tos/dynamic-notarizations/update-metadata',
-                    'iota-notarization/how-tos/dynamic-notarizations/transfer',
-                    'iota-notarization/how-tos/dynamic-notarizations/destroy',
+                    'developer/iota-notarization/how-tos/dynamic-notarizations/create',
+                    'developer/iota-notarization/how-tos/dynamic-notarizations/update-state',
+                    'developer/iota-notarization/how-tos/dynamic-notarizations/update-metadata',
+                    'developer/iota-notarization/how-tos/dynamic-notarizations/transfer',
+                    'developer/iota-notarization/how-tos/dynamic-notarizations/destroy',
                 ],
             },
             {
                 type: 'category',
                 label: 'Locked Notarizations',
                 items: [
-                    'iota-notarization/how-tos/locked-notarizations/create',
-                    'iota-notarization/how-tos/locked-notarizations/destroy',
+                    'developer/iota-notarization/how-tos/locked-notarizations/create',
+                    'developer/iota-notarization/how-tos/locked-notarizations/destroy',
                 ],
             },
-            'iota-notarization/how-tos/access-read-only-methods',
+            'developer/iota-notarization/how-tos/access-read-only-methods',
         ],
     },
     // {
@@ -82,7 +82,7 @@ const notarization = [
     //         },
     //     ],
     // },
-    'iota-notarization/contribute',
+    'developer/iota-notarization/contribute',
 ];
 
 module.exports = notarization;
