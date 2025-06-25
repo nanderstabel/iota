@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fmt::Debug,
     sync::{
         Arc,
@@ -24,6 +24,7 @@ use tracing::warn;
 use crate::{
     BlockAPI as _,
     block::{BlockRef, Round, VerifiedBlock},
+    block_manager::SuspendedBlock,
     commit::CertifiedCommits,
     context::Context,
     core::Core,
@@ -50,6 +51,10 @@ enum CoreThreadCommand {
     NewBlock(Round, oneshot::Sender<()>, bool),
     /// Request missing blocks that need to be synced.
     GetMissing(oneshot::Sender<BTreeSet<BlockRef>>),
+    /// Request the current suspended blocks list.
+    GetSuspended(oneshot::Sender<BTreeMap<BlockRef, SuspendedBlock>>),
+    /// Request the current list of missing ancestors.
+    GetMissingAncestors(oneshot::Sender<BTreeMap<BlockRef, BTreeSet<BlockRef>>>),
 }
 
 #[derive(Error, Debug)]
@@ -78,6 +83,12 @@ pub trait CoreThreadDispatcher: Sync + Send + 'static {
     async fn new_block(&self, round: Round, force: bool) -> Result<(), CoreError>;
 
     async fn get_missing_blocks(&self) -> Result<BTreeSet<BlockRef>, CoreError>;
+
+    async fn get_suspended_blocks(&self) -> Result<BTreeMap<BlockRef, SuspendedBlock>, CoreError>;
+
+    async fn get_missing_ancestors(
+        &self,
+    ) -> Result<BTreeMap<BlockRef, BTreeSet<BlockRef>>, CoreError>;
 
     /// Informs the core whether consumer of produced blocks exists.
     /// This is only used by core to decide if it should propose new blocks.
@@ -158,6 +169,14 @@ impl CoreThread {
                         CoreThreadCommand::GetMissing(sender) => {
                             let _scope = monitored_scope("CoreThread::loop::get_missing");
                             sender.send(self.core.get_missing_blocks()).ok();
+                        }
+                        CoreThreadCommand::GetSuspended(sender) => {
+                            let _scope = monitored_scope("CoreThread::loop::get_suspended");
+                            sender.send(self.core.get_suspended_blocks()).ok();
+                        }
+                        CoreThreadCommand::GetMissingAncestors(sender) => {
+                            let _scope = monitored_scope("CoreThread::loop::get_missing_ancestor");
+                            sender.send(self.core.get_missing_ancestors()).ok();
                         }
                     }
                 }
@@ -356,6 +375,21 @@ impl CoreThreadDispatcher for ChannelCoreThreadDispatcher {
     async fn get_missing_blocks(&self) -> Result<BTreeSet<BlockRef>, CoreError> {
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::GetMissing(sender)).await;
+        receiver.await.map_err(|e| Shutdown(e.to_string()))
+    }
+
+    async fn get_suspended_blocks(&self) -> Result<BTreeMap<BlockRef, SuspendedBlock>, CoreError> {
+        let (sender, receiver) = oneshot::channel();
+        self.send(CoreThreadCommand::GetSuspended(sender)).await;
+        receiver.await.map_err(|e| Shutdown(e.to_string()))
+    }
+
+    async fn get_missing_ancestors(
+        &self,
+    ) -> Result<BTreeMap<BlockRef, BTreeSet<BlockRef>>, CoreError> {
+        let (sender, receiver) = oneshot::channel();
+        self.send(CoreThreadCommand::GetMissingAncestors(sender))
+            .await;
         receiver.await.map_err(|e| Shutdown(e.to_string()))
     }
 

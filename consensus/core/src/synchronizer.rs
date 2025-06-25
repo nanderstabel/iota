@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
@@ -34,7 +34,7 @@ use crate::{
     BlockAPI, CommitIndex, Round,
     authority_service::COMMIT_LAG_MULTIPLIER,
     block::{BlockRef, SignedBlock, VerifiedBlock},
-    block_manager::BlockManager,
+    block_manager::SuspendedBlock,
     block_verifier::BlockVerifier,
     commit_vote_monitor::CommitVoteMonitor,
     context::Context,
@@ -263,7 +263,6 @@ pub(crate) struct Synchronizer<C: NetworkClient, V: BlockVerifier, D: CoreThread
     block_verifier: Arc<V>,
     inflight_blocks_map: Arc<InflightBlocksMap>,
     commands_sender: Sender<Command>,
-    block_manager: Arc<RwLock<BlockManager>>,
 }
 
 impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C, V, D> {
@@ -281,13 +280,6 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         let (commands_sender, commands_receiver) =
             channel("consensus_synchronizer_commands", 1_000);
         let inflight_blocks_map = InflightBlocksMap::new();
-
-        // Prepare the BlockManager for the synchronizer
-        let block_manager = Arc::new(RwLock::new(BlockManager::new(
-            context.clone(),
-            dag_state.clone(),
-            block_verifier.clone(),
-        )));
 
         // Spawn the tasks to fetch the blocks from the others
         let mut fetch_block_senders = BTreeMap::new();
@@ -336,7 +328,6 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                 inflight_blocks_map,
                 commands_sender: commands_sender_clone,
                 dag_state,
-                block_manager,
             };
             s.run().await;
         }));
@@ -885,6 +876,18 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
             .await
             .map_err(|_err| ConsensusError::Shutdown)?;
 
+        let suspended_blocks = self
+            .core_dispatcher
+            .get_suspended_blocks()
+            .await
+            .map_err(|_err| ConsensusError::Shutdown)?;
+
+        let missing_ancestors = self
+            .core_dispatcher
+            .get_missing_ancestors()
+            .await
+            .map_err(|_err| ConsensusError::Shutdown)?;
+
         // No reason to kick off the scheduler if there are no missing blocks to fetch
         if missing_blocks.is_empty() {
             return Ok(());
@@ -898,7 +901,6 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         let blocks_to_fetch = self.inflight_blocks_map.clone();
         let commands_sender = self.commands_sender.clone();
         let dag_state = self.dag_state.clone();
-        let block_manager = self.block_manager.clone();
 
         let (commit_lagging, last_commit_index, quorum_commit_index) = self.is_commit_lagging();
         if commit_lagging {
@@ -957,7 +959,8 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                     network_client,
                     missing_blocks,
                     dag_state,
-                    block_manager.clone(),
+                    suspended_blocks,
+                    missing_ancestors,
                 )
                 .await;
                 context
@@ -1026,7 +1029,8 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         network_client: Arc<C>,
         missing_blocks: BTreeSet<BlockRef>,
         dag_state: Arc<RwLock<DagState>>,
-        block_manager: Arc<RwLock<BlockManager>>,
+        suspended_blocks: BTreeMap<BlockRef, SuspendedBlock>,
+        missing_ancestors: BTreeMap<BlockRef, BTreeSet<BlockRef>>,
     ) -> Vec<(BlocksGuard, Vec<Bytes>, AuthorityIndex)> {
         let mut request_futures = FuturesUnordered::new();
 
@@ -1037,14 +1041,11 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         // blocks from the authors of blocks referencing them.
         const HOT_FETCH_RATIO_THRESHOLD: usize = 50;
         {
-            // Acquire the lock on the BlockManager
-            let bm = block_manager.read();
-
-            if bm.num_suspended_blocks() > HOT_FETCH_RATIO_THRESHOLD {
+            if suspended_blocks.len() > HOT_FETCH_RATIO_THRESHOLD {
                 // Step 1: Map authors to their missing blocks
                 let mut author_to_blocks: HashMap<AuthorityIndex, Vec<BlockRef>> = HashMap::new();
                 for missing in &missing_blocks {
-                    for author in bm.dependents_of(missing) {
+                    for author in dependents_of(missing, &suspended_blocks, &missing_ancestors) {
                         author_to_blocks.entry(author).or_default().push(*missing);
                     }
                 }
@@ -1227,10 +1228,34 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
     }
 }
 
+/// Returns the list of authority indices that authored suspended blocks
+/// which list `missing` as one of their missing ancestors.
+pub(crate) fn dependents_of(
+    missing: &BlockRef,
+    suspended_blocks: &BTreeMap<BlockRef, SuspendedBlock>,
+    missing_ancestors: &BTreeMap<BlockRef, BTreeSet<BlockRef>>,
+) -> Vec<AuthorityIndex> {
+    if let Some(dependents) = missing_ancestors.get(missing) {
+        let mut seen = HashSet::with_capacity(dependents.len());
+        let mut result = Vec::new();
+        for dependent in dependents {
+            let sb = suspended_blocks
+                .get(dependent)
+                .expect("Suspended block for missing ancestor should exist.");
+            let author = sb.block.author();
+            if seen.insert(author) {
+                result.push(author);
+            }
+        }
+        result
+    } else {
+        Vec::new()
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeMap, BTreeSet},
+        collections::{BTreeMap, BTreeSet, HashSet},
         sync::Arc,
         time::Duration,
     };
@@ -1245,6 +1270,7 @@ mod tests {
         BlockAPI, CommitDigest, CommitIndex,
         authority_service::COMMIT_LAG_MULTIPLIER,
         block::{BlockDigest, BlockRef, Round, TestBlock, VerifiedBlock},
+        block_manager::SuspendedBlock,
         block_verifier::NoopBlockVerifier,
         commit::{CommitRange, CommitVote, TrustedCommit},
         commit_vote_monitor::CommitVoteMonitor,

@@ -36,7 +36,7 @@ use crate::{
         Block, BlockAPI, BlockRef, BlockTimestampMs, BlockV1, ExtendedBlock, GENESIS_ROUND, Round,
         SignedBlock, Slot, VerifiedBlock,
     },
-    block_manager::BlockManager,
+    block_manager::{BlockManager, SuspendedBlock},
     commit::{
         CertifiedCommit, CertifiedCommits, CommitAPI, CommittedSubDag, DecidedLeader, Decision,
     },
@@ -927,6 +927,16 @@ impl Core {
     pub(crate) fn get_missing_blocks(&self) -> BTreeSet<BlockRef> {
         let _scope = monitored_scope("Core::get_missing_blocks");
         self.block_manager.missing_blocks()
+    }
+
+    pub(crate) fn get_suspended_blocks(&self) -> BTreeMap<BlockRef, SuspendedBlock> {
+        let _scope = monitored_scope("Core::get_suspended_blocks");
+        self.block_manager.suspended_blocks()
+    }
+
+    pub(crate) fn get_missing_ancestors(&self) -> BTreeMap<BlockRef, BTreeSet<BlockRef>> {
+        let _scope = monitored_scope("Core::get_missing_ancestors");
+        self.block_manager.missing_ancestors()
     }
 
     /// Sets if there is consumer available to consume blocks produced by the
