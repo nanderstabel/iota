@@ -1240,7 +1240,7 @@ pub(crate) fn dependents_of(
             let sb = suspended_blocks
                 .get(dependent)
                 .expect("Suspended block for missing ancestor should exist.");
-            let author = sb.block.author();
+            let author = sb.author();
             if seen.insert(author) {
                 result.push(author);
             }

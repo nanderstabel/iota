@@ -8,6 +8,7 @@ use std::{
     time::Instant,
 };
 
+use consensus_config::AuthorityIndex;
 use iota_metrics::monitored_scope;
 use itertools::Itertools as _;
 use parking_lot::RwLock;
@@ -22,8 +23,8 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate) struct SuspendedBlock {
-    pub(crate) block: VerifiedBlock,
+pub(crate)  struct SuspendedBlock {
+    block: VerifiedBlock,
     missing_ancestors: BTreeSet<BlockRef>,
     timestamp: Instant,
 }
@@ -35,6 +36,9 @@ impl SuspendedBlock {
             missing_ancestors,
             timestamp: Instant::now(),
         }
+    }
+    pub fn author(&self) -> AuthorityIndex {
+        self.block.author()
     }
 }
 
