@@ -29,7 +29,10 @@ mod test {
             workload_configuration::{WorkloadConfig, WorkloadConfiguration, WorkloadWeights},
         },
     };
-    use iota_config::{AUTHORITIES_DB_NAME, IOTA_KEYSTORE_FILENAME, node::AuthorityOverloadConfig};
+    use iota_config::{
+        AUTHORITIES_DB_NAME, ExecutionCacheConfig, IOTA_KEYSTORE_FILENAME,
+        node::AuthorityOverloadConfig,
+    };
     use iota_core::{
         authority::{
             AuthorityState, authority_store_tables::AuthorityPerpetualTables, framework_injection,
