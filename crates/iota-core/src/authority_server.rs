@@ -817,7 +817,7 @@ impl ValidatorService {
                 .into()
             );
             fp_ensure!(
-                !self.state.is_tx_already_executed(&tx_digest)?,
+                !self.state.is_tx_already_executed(&tx_digest),
                 IotaError::UserInput {
                     error: UserInputError::AlreadyExecuted { digest: tx_digest }
                 }
