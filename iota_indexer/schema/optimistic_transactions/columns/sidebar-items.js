@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["balance_changes","events","insertion_order","object_changes","raw_effects","raw_transaction","star","success_command_count","transaction_digest","transaction_kind"]};

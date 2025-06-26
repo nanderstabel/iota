@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Command"],"mod":["deprecated"],"struct":["IndexerConfig","IngestionConfig","IngestionSources","IotaNamesOptions","JsonRpcConfig","PruningOptions","SnapshotLagConfig"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["recipient","sender","star","tx_insertion_order"]};

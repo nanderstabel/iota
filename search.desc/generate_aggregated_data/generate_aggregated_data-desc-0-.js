@@ -1,0 +1,1 @@
+searchState.loadedDescShard("generate_aggregated_data", 0, "Reads and aggregates the CSV unlock data from the cloned …\nClones the repository containing raw data into a temporary …\nConverts a raw unlock date string into ISO 8601 format. It …\nWrites the aggregated unlock data into a CSV file.")

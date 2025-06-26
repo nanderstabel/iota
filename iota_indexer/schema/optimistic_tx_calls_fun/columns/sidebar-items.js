@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["func","module","package","sender","star","tx_insertion_order"]};

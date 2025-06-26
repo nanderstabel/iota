@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DomainFormat"],"fn":["validate_label"],"struct":["Domain"]};

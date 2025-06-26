@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["config","constants","domain","error","registry"],"struct":["IotaNamesRegistration","SubdomainRegistration"],"trait":["IotaNamesNft"]};

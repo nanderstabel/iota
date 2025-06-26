@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FIXTURES_DIR"],"fn":["main"]};
