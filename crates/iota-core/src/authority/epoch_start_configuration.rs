@@ -11,7 +11,7 @@ use iota_types::{
     base_types::SequenceNumber,
     deny_list_v1::get_deny_list_obj_initial_shared_version,
     epoch_data::EpochData,
-    error::IotaResult,
+    error::{IotaError, IotaResult},
     iota_system_state::epoch_start_iota_system_state::{
         EpochStartSystemState, EpochStartSystemStateTrait,
     },
@@ -109,7 +109,9 @@ impl EpochStartConfiguration {
         let randomness_obj_initial_shared_version =
             get_randomness_state_obj_initial_shared_version(object_store)?;
         let coin_deny_list_obj_initial_shared_version =
-            get_deny_list_obj_initial_shared_version(object_store)?;
+            get_deny_list_obj_initial_shared_version(object_store).ok_or_else(|| {
+                IotaError::Storage("Deny list object initial shared version not found".to_string())
+            })?;
         Ok(Self::V2(EpochStartConfigurationV2 {
             system_state,
             epoch_digest,

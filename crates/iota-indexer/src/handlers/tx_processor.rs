@@ -201,7 +201,11 @@ impl<'a> EpochEndIndexingObjectStore<'a> {
 
 impl iota_types::storage::ObjectStore for EpochEndIndexingObjectStore<'_> {
     fn get_object(&self, object_id: &ObjectID) -> Option<Object> {
-        self.objects.iter().find(|o| o.id() == *object_id).cloned()
+        self.objects
+            .iter()
+            .find(|o| o.id() == *object_id)
+            .cloned()
+            .cloned()
     }
 
     fn get_object_by_key(
@@ -212,6 +216,7 @@ impl iota_types::storage::ObjectStore for EpochEndIndexingObjectStore<'_> {
         self.objects
             .iter()
             .find(|o| o.id() == *object_id && o.version() == version)
+            .cloned()
             .cloned()
     }
 }

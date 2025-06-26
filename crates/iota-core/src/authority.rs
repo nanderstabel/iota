@@ -1083,7 +1083,7 @@ impl AuthorityState {
             .instrument(tracing::debug_span!(
                 "notify_read_effects_in_execute_certificate_with_effects"
             ))
-            .await?
+            .await
             .pop()
             .expect("notify_read_effects should return exactly 1 element");
 
@@ -2536,7 +2536,7 @@ impl AuthorityState {
                     } else {
                         // Non-genesis object should be in the database with the given version.
                         self.get_object_store()
-                            .get_object_by_key(&object_id, o.version())?
+                            .get_object_by_key(&object_id, o.version())
                             .ok_or_else(|| UserInputError::ObjectNotFound {
                                 object_id,
                                 version: Some(o.version()),
@@ -5057,7 +5057,7 @@ impl TransactionKeyValueStoreTrait for AuthorityState {
 
         let fx = if !effects_keys.is_empty() {
             self.get_transaction_cache_reader()
-                .multi_get_executed_effects(effects_keys)?
+                .multi_get_executed_effects(effects_keys)
         } else {
             vec![]
         };
@@ -5153,7 +5153,7 @@ impl TransactionKeyValueStoreTrait for AuthorityState {
         }
         let events_digests: Vec<_> = self
             .get_transaction_cache_reader()
-            .multi_get_executed_effects(digests)?
+            .multi_get_executed_effects(digests)
             .into_iter()
             .map(|t| t.and_then(|t| t.events_digest().cloned()))
             .collect();

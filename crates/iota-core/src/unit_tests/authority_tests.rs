@@ -2800,7 +2800,7 @@ async fn test_authority_store_init() {
             false,
         )
         .await;
-        let package_obj = authority.get_object(&package.0).await.unwrap().unwrap();
+        let package_obj = authority.get_object(&package.0).await.unwrap();
 
         // Create a parent.
         let effects = call_move(
@@ -2818,7 +2818,7 @@ async fn test_authority_store_init() {
         .unwrap();
         assert!(effects.status().is_ok());
         let parent = effects.created()[0].0;
-        let parent_obj = authority.get_object(&parent.0).await.unwrap().unwrap();
+        let parent_obj = authority.get_object(&parent.0).await.unwrap();
 
         // Create a child.
         let effects = call_move(
@@ -2836,7 +2836,7 @@ async fn test_authority_store_init() {
         .unwrap();
         assert!(effects.status().is_ok());
         let child = effects.created()[0].0;
-        let child_obj = authority.get_object(&child.0).await.unwrap().unwrap();
+        let child_obj = authority.get_object(&child.0).await.unwrap();
 
         // Add the child to the parent.
         let effects = call_move(
@@ -2864,7 +2864,7 @@ async fn test_authority_store_init() {
             Owner::Shared { .. } | Owner::Immutable | Owner::AddressOwner(_) => panic!(),
         };
         // This is the object that we need to trigger the failure code path.
-        let field_obj = authority.get_object(&field_id).await.unwrap().unwrap();
+        let field_obj = authority.get_object(&field_id).await.unwrap();
         assert_eq!(field_obj.owner, parent.0);
 
         (package_obj, parent_obj, child_obj, field_obj)

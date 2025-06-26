@@ -18,7 +18,6 @@ use iota_types::{
     storage::{
         BackingPackageStore, BackingStore, ChildObjectResolver, InputKey, MarkerValue, ObjectKey,
         ObjectOrTombstone, ObjectStore, PackageObject,
-        error::{Error as StorageError, Result as StorageResult},
     },
     transaction::{VerifiedSignedTransaction, VerifiedTransaction},
 };

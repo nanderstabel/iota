@@ -2,7 +2,7 @@
 // Modifications Copyright (c) 2024 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::{future::ready, sync::Arc};
 
 use futures::{FutureExt, future::BoxFuture};
 use iota_common::sync::notify_read::NotifyRead;
