@@ -1042,19 +1042,22 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         const HOT_FETCH_RATIO_THRESHOLD: f64 = 50.0;
         if suspended_blocks.len() as f64 / missing_blocks.len() as f64 > HOT_FETCH_RATIO_THRESHOLD {
             // Step 1: Map authors to their missing blocks
-            let mut author_to_blocks: HashMap<AuthorityIndex, Vec<BlockRef>> = HashMap::new();
+            let mut authority_to_blocks: HashMap<AuthorityIndex, Vec<BlockRef>> = HashMap::new();
             for missing in &missing_blocks {
                 for author in dependents_of(missing, &suspended_blocks, &missing_ancestors) {
-                    author_to_blocks.entry(author).or_default().push(*missing);
+                    authority_to_blocks
+                        .entry(author)
+                        .or_default()
+                        .push(*missing);
                 }
             }
             // Step 2: Choose one random authority from the map
 
             #[cfg(not(test))]
-            let chosen = author_to_blocks.iter().choose(&mut ThreadRng::default());
+            let chosen = authority_to_blocks.iter().choose(&mut ThreadRng::default());
 
             #[cfg(test)]
-            let chosen = author_to_blocks.iter().next();
+            let chosen = authority_to_blocks.iter().next();
 
             if let Some((&peer, blocks)) = chosen {
                 let block_refs = blocks

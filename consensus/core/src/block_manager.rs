@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate)  struct SuspendedBlock {
+pub(crate) struct SuspendedBlock {
     block: VerifiedBlock,
     missing_ancestors: BTreeSet<BlockRef>,
     timestamp: Instant,
