@@ -327,22 +327,6 @@ const config = {
             to: "users/wallets",
             className: 'navbar-icon-users',
           },
-          // {
-          //   label: "TS SDK",
-          //   to: "ts-sdk/typescript/",
-          // },
-          // {
-          //   label: "IOTA Identity",
-          //   to: "iota-identity",
-          // },
-          // {
-          //   label: "IOTA EVM",
-          //   to: "iota-evm",
-          // },
-          {
-            label: "IOTA Notarization",
-            to: "iota-notarization",
-          },
           {
             type: 'custom-WalletConnectButton',
             position: 'right',
