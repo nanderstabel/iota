@@ -30,14 +30,14 @@ pub(crate) struct SuspendedBlock {
 }
 
 impl SuspendedBlock {
-    fn new(block: VerifiedBlock, missing_ancestors: BTreeSet<BlockRef>) -> Self {
+    pub(crate) fn new(block: VerifiedBlock, missing_ancestors: BTreeSet<BlockRef>) -> Self {
         Self {
             block,
             missing_ancestors,
             timestamp: Instant::now(),
         }
     }
-    pub fn author(&self) -> AuthorityIndex {
+    pub(crate) fn author(&self) -> AuthorityIndex {
         self.block.author()
     }
 }
@@ -747,7 +747,7 @@ impl BlockManager {
     /// Returns all the suspended blocks whose causal history we miss hence we
     /// can't accept them yet.
     #[cfg(test)]
-    fn suspended_blocks(&self) -> Vec<BlockRef> {
+    fn suspended_blocks_test(&self) -> Vec<BlockRef> {
         self.suspended_blocks.keys().cloned().collect()
     }
 }
@@ -838,7 +838,7 @@ mod tests {
 
         // AND suspended blocks should return the round_2_blocks
         assert_eq!(
-            block_manager.suspended_blocks(),
+            block_manager.suspended_blocks_test(),
             round_2_blocks
                 .into_iter()
                 .map(|block| block.reference())
@@ -1368,7 +1368,7 @@ mod tests {
 
         // Other blocks should be rejected and there should be no remaining suspended
         // block.
-        assert!(block_manager.suspended_blocks().is_empty());
+        assert!(block_manager.suspended_blocks_test().is_empty());
     }
 
     #[tokio::test]

@@ -84,11 +84,15 @@ pub trait CoreThreadDispatcher: Sync + Send + 'static {
 
     async fn get_missing_blocks(&self) -> Result<BTreeSet<BlockRef>, CoreError>;
 
-    async fn get_suspended_blocks(&self) -> Result<BTreeMap<BlockRef, SuspendedBlock>, CoreError>;
+    async fn get_suspended_blocks(&self) -> Result<BTreeMap<BlockRef, SuspendedBlock>, CoreError> {
+        Ok(BTreeMap::new())
+    }
 
     async fn get_missing_ancestors(
         &self,
-    ) -> Result<BTreeMap<BlockRef, BTreeSet<BlockRef>>, CoreError>;
+    ) -> Result<BTreeMap<BlockRef, BTreeSet<BlockRef>>, CoreError> {
+        Ok(BTreeMap::new())
+    }
 
     /// Informs the core whether consumer of produced blocks exists.
     /// This is only used by core to decide if it should propose new blocks.

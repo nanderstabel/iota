@@ -1057,7 +1057,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
             let chosen = authority_to_blocks.iter().choose(&mut ThreadRng::default());
 
             #[cfg(test)]
-            let chosen = authority_to_blocks.iter().next();
+            let chosen = authority_to_blocks.iter().min_by_key(|(peer, _)| *peer);
 
             if let Some((&peer, blocks)) = chosen {
                 let block_refs = blocks
@@ -1273,13 +1273,14 @@ mod tests {
         block::{BlockDigest, BlockRef, Round, TestBlock, VerifiedBlock},
         block_manager::SuspendedBlock,
         block_verifier::NoopBlockVerifier,
-        commit::{CommitRange, CommitVote, TrustedCommit},
+        commit::{CertifiedCommits, CommitRange, CommitVote, TrustedCommit},
         commit_vote_monitor::CommitVoteMonitor,
         context::Context,
-        core_thread::{CoreThreadDispatcher, tests::MockCoreThreadDispatcher},
+        core_thread::{CoreError, CoreThreadDispatcher, tests::MockCoreThreadDispatcher},
         dag_state::DagState,
         error::{ConsensusError, ConsensusResult},
         network::{BlockStream, NetworkClient},
+        round_prober::QuorumRound,
         storage::mem_store::MemStore,
         synchronizer::{
             FETCH_BLOCKS_CONCURRENCY, FETCH_REQUEST_TIMEOUT, InflightBlocksMap,
@@ -2008,5 +2009,190 @@ mod tests {
                 std::panic::resume_unwind(err.into_panic());
             }
         }
+    }
+    #[derive(Default)]
+    struct SyncMockDispatcher {
+        missing_blocks: tokio::sync::Mutex<std::collections::BTreeSet<BlockRef>>,
+        suspended_blocks: tokio::sync::Mutex<std::collections::BTreeMap<BlockRef, SuspendedBlock>>,
+        missing_ancestors: tokio::sync::Mutex<
+            std::collections::BTreeMap<BlockRef, std::collections::BTreeSet<BlockRef>>,
+        >,
+        added_blocks: tokio::sync::Mutex<Vec<VerifiedBlock>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CoreThreadDispatcher for SyncMockDispatcher {
+        async fn get_missing_blocks(
+            &self,
+        ) -> Result<std::collections::BTreeSet<BlockRef>, CoreError> {
+            Ok(self.missing_blocks.lock().await.clone())
+        }
+        async fn get_suspended_blocks(
+            &self,
+        ) -> Result<std::collections::BTreeMap<BlockRef, SuspendedBlock>, CoreError> {
+            Ok(self.suspended_blocks.lock().await.clone())
+        }
+        async fn get_missing_ancestors(
+            &self,
+        ) -> Result<
+            std::collections::BTreeMap<BlockRef, std::collections::BTreeSet<BlockRef>>,
+            CoreError,
+        > {
+            Ok(self.missing_ancestors.lock().await.clone())
+        }
+        async fn add_blocks(
+            &self,
+            blocks: Vec<VerifiedBlock>,
+        ) -> Result<std::collections::BTreeSet<BlockRef>, CoreError> {
+            let mut guard = self.added_blocks.lock().await;
+            guard.extend(blocks.clone());
+            Ok(blocks.iter().map(|b| b.reference()).collect())
+        }
+
+        // Stub out the remaining CoreThreadDispatcher methods with defaults:
+
+        async fn check_block_refs(
+            &self,
+            block_refs: Vec<BlockRef>,
+        ) -> Result<std::collections::BTreeSet<BlockRef>, CoreError> {
+            // Echo back the requested refs by default
+            Ok(block_refs.into_iter().collect())
+        }
+
+        async fn add_certified_commits(
+            &self,
+            _commits: CertifiedCommits,
+        ) -> Result<std::collections::BTreeSet<BlockRef>, CoreError> {
+            // No additional certified-commit logic in tests
+            Ok(std::collections::BTreeSet::new())
+        }
+
+        async fn new_block(&self, _round: Round, _force: bool) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn set_subscriber_exists(&self, _exists: bool) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn set_propagation_delay_and_quorum_rounds(
+            &self,
+            _delay: Round,
+            _received_quorum_rounds: Vec<QuorumRound>,
+            _accepted_quorum_rounds: Vec<QuorumRound>,
+        ) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn set_last_known_proposed_round(&self, _round: Round) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn highest_received_rounds(&self) -> Vec<Round> {
+            Vec::new()
+        }
+    }
+
+    impl SyncMockDispatcher {
+        async fn stub_missing_blocks(&self, b: std::collections::BTreeSet<BlockRef>) {
+            *self.missing_blocks.lock().await = b;
+        }
+        async fn stub_suspended_blocks(
+            &self,
+            m: std::collections::BTreeMap<BlockRef, SuspendedBlock>,
+        ) {
+            *self.suspended_blocks.lock().await = m;
+        }
+        async fn stub_missing_ancestors(
+            &self,
+            m: std::collections::BTreeMap<BlockRef, std::collections::BTreeSet<BlockRef>>,
+        ) {
+            *self.missing_ancestors.lock().await = m;
+        }
+        async fn get_added_blocks(&self) -> Vec<VerifiedBlock> {
+            self.added_blocks.lock().await.clone()
+        }
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn hot_fetch_picks_smallest_authority() {
+        // 1) Setup 10‐node context and in‐mem DAG
+        let (ctx, _) = Context::new_for_test(10);
+        let context = Arc::new(ctx);
+        let store = Arc::new(MemStore::new());
+        let dag_state = Arc::new(RwLock::new(DagState::new(context.clone(), store)));
+        let inflight = InflightBlocksMap::new();
+
+        // 2) One missing block
+        let missing_vb = VerifiedBlock::new_for_test(TestBlock::new(100, 2).build());
+        let missing_ref = missing_vb.reference();
+        let missing_blocks = BTreeSet::from([missing_ref]);
+
+        // 3) 51 suspended children split across authors 2,3,4
+        let suspended_map = (0..51)
+            .map(|i| {
+                let auth = if i < 17 {
+                    2
+                } else if i < 34 {
+                    3
+                } else {
+                    4
+                };
+                let vb = VerifiedBlock::new_for_test(
+                    TestBlock::new(200 + i, auth)
+                        .set_ancestors(vec![missing_ref])
+                        .build(),
+                );
+                (
+                    vb.reference(),
+                    SuspendedBlock::new(vb, BTreeSet::from([missing_ref])),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        let missing_anc = BTreeMap::from([(missing_ref, suspended_map.keys().cloned().collect())]);
+
+        // 4) Prepare mocks
+        let core_disp = Arc::new(SyncMockDispatcher::default());
+        core_disp.stub_missing_blocks(missing_blocks.clone()).await;
+        core_disp.stub_suspended_blocks(suspended_map.clone()).await;
+        core_disp.stub_missing_ancestors(missing_anc.clone()).await;
+
+        let network = Arc::new(MockNetworkClient::default());
+        // Stub *all* three authorities so none panic:
+        for i in 1..=9 {
+            let peer = AuthorityIndex::new_for_test(i);
+            network
+                .stub_fetch_blocks(vec![missing_vb.clone()], peer, None)
+                .await;
+        }
+
+        // 5) Invoke hot‐fetch directly
+        let results = Synchronizer::<MockNetworkClient, NoopBlockVerifier, SyncMockDispatcher>
+        ::fetch_blocks_from_authorities(
+            context.clone(),
+            inflight.clone(),
+            network.clone(),
+            missing_blocks,
+            dag_state.clone(),
+            suspended_map,
+            missing_anc,
+        )
+            .await;
+
+        // 6) Assert we got exactly two fetches - one hot path and one cold periodic
+        //    path,
+        assert_eq!(results.len(), 2);
+
+        // 7) The hot‐fetch went to peer 2
+        let (_hot_guard, hot_bytes, hot_peer) = &results[0];
+        assert_eq!(*hot_peer, AuthorityIndex::new_for_test(2));
+
+        // 8) The periodic fetch went to peer 1
+        let (_periodic_guard, _periodic_bytes, periodic_peer) = &results[1];
+        assert_eq!(*periodic_peer, AuthorityIndex::new_for_test(1));
+
+        // 7) Verify the returned bytes correspond to that block
+        let expected = missing_vb.serialized().clone();
+        assert_eq!(hot_bytes, &vec![expected]);
     }
 }
